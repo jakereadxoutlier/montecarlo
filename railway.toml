@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python3 server.py"
+restartPolicyType = "always"
+
+[environments.production]
+PORT = 8080

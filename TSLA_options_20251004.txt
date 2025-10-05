@@ -1,0 +1,54 @@
+2025-10-04 14:37:47,817 - stockflow-server-v2 - INFO - Starting Stockflow server v2...
+2025-10-04 14:37:47,821 - mcp.server.lowlevel.server - INFO - Processing request of type ListToolsRequest
+2025-10-04 14:37:47,823 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest
+TSLA Options Chain Retrieval Test
+========================================
+Connecting to stockflow MCP server...
+✓ Connected and initialized session
+✓ Available tools: ['get_stock_data_v2', 'get_historical_data_v2', 'get_options_chain_v2']
+
+Calling get_options_chain_v2 for TSLA with Greeks...
+✓ Successfully retrieved TSLA options data
+
+============================================================
+TSLA OPTIONS CHAIN - 2025-10-10
+============================================================
+Underlying Price: $429.83
+Days to Expiration: 5
+Total Volume: 1,041,981
+Put/Call Ratio: 0.769
+
+HIGHEST VOLUME CALL OPTIONS:
+Strike   Volume     Bid      Ask      IV      
+--------------------------------------------------
+$450.0   62562.0    $5.65    $5.75    0.553  
+$430.0   55340.0    $12.70   $12.80   0.540  
+$440.0   38082.0    $8.50    $8.65    0.543  
+$500.0   28560.0    $0.93    $0.94    0.671  
+$435.0   22268.0    $10.40   $10.50   0.539  
+
+HIGHEST VOLUME PUT OPTIONS:
+Strike   Volume     Bid      Ask      IV      
+--------------------------------------------------
+$145.0   61360.0    $0.00    $0.01    2.250  
+$420.0   41931.0    $7.95    $8.10    0.525  
+$225.0   39421.0    $0.02    $0.04    1.578  
+$430.0   32781.0    $12.35   $12.50   0.520  
+$400.0   24976.0    $3.00    $3.10    0.559  
+
+AVAILABLE EXPIRATION DATES:
+  2025-10-10 ← Current
+  2025-10-17
+  2025-10-24
+  2025-10-31
+  2025-11-07
+  2025-11-21
+  2025-12-19
+  2026-01-16
+  2026-02-20
+  2026-03-20
+  ... and 11 more dates
+
+✅ Successfully retrieved options data for TSLA
+   Expiration: 2025-10-10
+   Total contracts: 225

@@ -1,0 +1,7 @@
+Collecting scipy
+  Downloading scipy-1.16.2-cp311-cp311-macosx_14_0_x86_64.whl.metadata (62 kB)
+Requirement already satisfied: numpy<2.6,>=1.25.2 in /usr/local/lib/python3.11/site-packages (from scipy) (2.3.3)
+Downloading scipy-1.16.2-cp311-cp311-macosx_14_0_x86_64.whl (23.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 23.5/23.5 MB 23.9 MB/s eta 0:00:00
+Installing collected packages: scipy
+Successfully installed scipy-1.16.2
