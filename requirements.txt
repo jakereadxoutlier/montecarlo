@@ -9,5 +9,3 @@ textblob>=0.17.0
 slack-bolt>=1.18.0
 slack-sdk>=3.20.0
 python-dotenv>=1.0.0
-threading>=0.1.0
-asyncio-mqtt>=0.11.0
