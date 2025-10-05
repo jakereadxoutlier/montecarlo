@@ -31,9 +31,9 @@ from advanced_analysis_engine import AdvancedOptionsEngine
 dotenv.load_dotenv()
 
 # API Keys Configuration
-NEWSAPI_KEY = os.getenv('NEWSAPI_KEY', '7e35528b5f6e42e388135fe7f71d125f')
-X_API_KEY = os.getenv('X_API_KEY', 'xsP1MtOlIlyXJuC4KwK12Igd5')
-X_API_SECRET = os.getenv('X_API_SECRET', 'fZYYUan8fHtRsfOsMK2HXpuVYubLeTEyeCkSCuySza0va2Nx7r')
+NEWSAPI_KEY = os.getenv('NEWSAPI_KEY')
+X_API_KEY = os.getenv('X_API_KEY')
+X_API_SECRET = os.getenv('X_API_SECRET')
 
 # Slack App Configuration
 SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')  # xoxb-your-bot-token
