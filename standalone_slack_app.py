@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import logging
+import re
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from mcp import ClientSession, StdioServerParameters
@@ -168,9 +169,9 @@ def setup_message_handlers(app):
     async def handle_smartpicks_command(message, say):
         await _handle_smart_picks_internal(message, say)
 
-    @app.message("pick")
+    @app.message(re.compile(r'^pick\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', re.IGNORECASE))
     async def handle_pick_command(message, say):
-        """Handle pick command."""
+        """Handle pick command with specific pattern to avoid conflicts."""
         try:
             text = message['text']
             logger.info(f"Received pick command: {text}")
@@ -239,7 +240,7 @@ def setup_message_handlers(app):
             await handle_help(message, say)
         elif 'smart picks' in text or 'smart pick' in text or 'smartpicks' in text or 'give me smart' in text:
             await _handle_smart_picks_internal(message, say)
-        elif any(word in text for word in ['pick', 'buy', 'analyze']):
+        elif re.match(r'^(pick|buy|analyze)\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', text):
             await handle_pick_command(message, say)
         else:
             await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430`\n- `Smart Picks`\n- `Options for 10/24/2025`")
