@@ -2,7 +2,7 @@
 """
 Standalone Slack App that runs independently and connects to StockFlow MCP server.
 This keeps the Slack connection alive while making MCP calls as needed.
-Fixed version with proper token handling.
+CLEAN VERSION - ALL OLD HANDLERS REMOVED
 """
 import asyncio
 import json
@@ -28,8 +28,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("standalone-slack-app")
-
-# Version: Smart Picks enabled - v1.1
 
 # MCP Server parameters
 MCP_SERVER_PARAMS = StdioServerParameters(
@@ -121,41 +119,7 @@ async def _handle_smart_picks_internal(message, say):
         await say("Sorry, I encountered an error with Smart Picks analysis. Please try again later.")
 
 def setup_message_handlers(app):
-    """Setup all Slack message handlers after app initialization."""
-
-    @app.message("help")
-    async def handle_help(message, say):
-        """Handle help command."""
-        help_text = """**StockFlow Bot Commands:**
-
-🎯 **Core Commands:**
-- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice for an option (auto-monitors for sell alerts)
-- `Analyze [SYMBOL] $[STRIKE]` - Same as Pick
-- `Buy [SYMBOL] $[STRIKE]` - Same as Pick
-- `Options for [MM/DD/YYYY]` - Find best options for a specific expiration date
-
-🧠 **Advanced Commands:**
-- `Smart Picks` - Find optimal risk/reward options ≤30 days (THE HACK!)
-
-⚙️ **Control Commands:**
-- `Cancel` or `Stop` - Stop monitoring
-- `Help` - Show this help message
-
-**Examples:**
-- `Pick TSLA $430` - Analyzes and starts monitoring
-- `Smart Picks` - Shows optimal high-probability, high-profit options
-- `Options for 10/24/2025` - Shows best options expiring that Friday
-- `Analyze AAPL $200`
-
-🚀 **Advanced Analysis Features:**
-- 7 Novel Analysis Techniques (Fractal Volatility, Gamma Squeeze, etc.)
-- ITM probability (20K Monte Carlo + Advanced Monte Carlo)
-- Greek analysis (Delta, Gamma, Theta, Vega)
-- Market sentiment and news analysis
-- Composite risk/reward scoring
-- Automatic sell alert notifications"""
-
-        await say(help_text)
+    """Setup all Slack message handlers after app initialization - CLEAN VERSION."""
 
     @app.message("smart picks")
     async def handle_smart_picks_command(message, say):
@@ -171,13 +135,12 @@ def setup_message_handlers(app):
 
     @app.message(re.compile(r'^pick\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', re.IGNORECASE))
     async def handle_pick_command(message, say):
-        """Handle pick command with specific pattern to avoid conflicts."""
+        """Handle pick command with specific pattern."""
         try:
             text = message['text']
             logger.info(f"Received pick command: {text}")
 
             # Parse pick command
-            import re
             pick_pattern = r'pick\s+([a-z]{1,5})\s+\$?(\d+(?:\.\d+)?)'
             match = re.search(pick_pattern, text.lower())
 
@@ -233,15 +196,50 @@ def setup_message_handlers(app):
 
     @app.message()
     async def handle_default_message(message, say):
-        """Handle all other messages."""
+        """Handle all other messages - SINGLE CLEAN HANDLER."""
         text = message.get('text', '').strip().lower()
 
+        # Help command
         if any(word in text for word in ['help', 'commands', 'usage']):
-            await handle_help(message, say)
+            help_text = """**Monte Carlo Commands:**
+
+🎯 **Core Commands:**
+- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice for an option (auto-monitors for sell alerts)
+- `Analyze [SYMBOL] $[STRIKE]` - Same as Pick
+- `Buy [SYMBOL] $[STRIKE]` - Same as Pick
+- `Options for [MM/DD/YYYY]` - Find best options for a specific expiration date
+
+🧠 **Advanced Commands:**
+- `Smart Picks` - Find optimal risk/reward options ≤30 days (THE HACK!)
+
+⚙️ **Control Commands:**
+- `Cancel` or `Stop` - Stop monitoring
+- `Help` - Show this help message
+
+**Examples:**
+- `Pick TSLA $430` - Analyzes and starts monitoring
+- `Smart Picks` - Shows optimal high-probability, high-profit options
+- `Options for 10/24/2025` - Shows best options expiring that Friday
+- `Analyze AAPL $200`
+
+🚀 **Advanced Analysis Features:**
+- 7 Novel Analysis Techniques (Fractal Volatility, Gamma Squeeze, etc.)
+- ITM probability (20K Monte Carlo + Advanced Monte Carlo)
+- Greek analysis (Delta, Gamma, Theta, Vega)
+- Market sentiment and news analysis
+- Composite risk/reward scoring
+- Automatic sell alert notifications"""
+            await say(help_text)
+
+        # Smart Picks (fallback)
         elif 'smart picks' in text or 'smart pick' in text or 'smartpicks' in text or 'give me smart' in text:
             await _handle_smart_picks_internal(message, say)
+
+        # Pick command (fallback for non-regex matches)
         elif re.match(r'^(pick|buy|analyze)\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', text):
             await handle_pick_command(message, say)
+
+        # Default response
         else:
             await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430`\n- `Smart Picks`\n- `Options for 10/24/2025`")
 
@@ -254,14 +252,14 @@ async def main():
         return
 
     # Initialize Slack App with tokens
-    logger.info("🔧 Initializing Slack App...")
+    logger.info("🔧 Initializing Monte Carlo Slack App...")
     app = AsyncApp(token=SLACK_BOT_TOKEN)
 
     # Register all message handlers
     setup_message_handlers(app)
 
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
-    logger.info("🚀 Starting StockFlow Slack App...")
+    logger.info("🚀 Starting Monte Carlo Slack App...")
     logger.info("Ready to receive messages!")
     logger.info("Try: 'Smart Picks' or 'Pick TSLA $430'")
 
@@ -271,6 +269,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Slack App stopped by user")
+        logger.info("Monte Carlo App stopped by user")
     except Exception as e:
-        logger.error(f"Slack App error: {e}")
+        logger.error(f"Monte Carlo App error: {e}")
