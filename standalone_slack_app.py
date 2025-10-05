@@ -28,6 +28,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("standalone-slack-app")
 
+# Version: Smart Picks enabled - v1.1
+
 # MCP Server parameters
 MCP_SERVER_PARAMS = StdioServerParameters(
     command="python3",
