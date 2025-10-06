@@ -64,20 +64,20 @@ async def run_slack_in_background():
         # Don't crash the whole server if Slack fails
 
 async def main():
-    """Production server main - HTTP first, then Slack"""
+    """Production server main - HTTP server only, test Slack separately"""
     logger.info("🎯 StockFlow Production Server Starting...")
 
     try:
         # Start HTTP server first (for Railway)
         http_runner = await create_http_server()
 
-        # Start Slack app in background
-        slack_task = asyncio.create_task(run_slack_in_background())
+        # DON'T start Slack app yet - test if HTTP server alone works
+        logger.info("🚫 Slack Socket Mode disabled for testing")
 
         # Keep running with periodic health checks
         while True:
-            logger.info("🟢 StockFlow still running...")
-            await asyncio.sleep(300)  # Every 5 minutes
+            logger.info("🟢 HTTP server still running...")
+            await asyncio.sleep(60)  # Every minute for testing
 
     except KeyboardInterrupt:
         logger.info("👋 Shutting down...")
