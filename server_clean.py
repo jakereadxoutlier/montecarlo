@@ -27,7 +27,7 @@ except Exception as e:
     slack_imports_ok = False
     logger.error(f"❌ Slack imports failed: {e}")
 
-# Test 2: Add MCP imports (SUSPECT)
+# Test 2: MCP imports (WORKING)
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -36,6 +36,15 @@ try:
 except Exception as e:
     mcp_imports_ok = False
     logger.error(f"❌ MCP imports failed: {e}")
+
+# Test 3: Import standalone_slack_app (REAL SUSPECT)
+try:
+    from standalone_slack_app import main as run_slack_app
+    standalone_app_import_ok = True
+    logger.info("✅ standalone_slack_app import successful")
+except Exception as e:
+    standalone_app_import_ok = False
+    logger.error(f"❌ standalone_slack_app import failed: {e}")
 
 async def health(request):
     return web.json_response({
@@ -49,6 +58,7 @@ async def root(request):
         "message": "Clean server is running!",
         "slack_imports": slack_imports_ok,
         "mcp_imports": mcp_imports_ok,
+        "standalone_app_import": standalone_app_import_ok,
         "tokens_present": bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN) if slack_imports_ok else False
     })
 
