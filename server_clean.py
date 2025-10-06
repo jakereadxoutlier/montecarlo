@@ -62,20 +62,41 @@ async def root(request):
         "tokens_present": bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN) if slack_imports_ok else False
     })
 
-async def test_slack_app_start():
-    """Test starting Slack app - this is likely where it crashes"""
+async def create_railway_compatible_slack_app():
+    """Create Slack app that doesn't block Railway"""
     try:
-        logger.info("🚀 TESTING: Starting Slack Socket Mode app...")
+        logger.info("🚀 Creating Railway-compatible Slack app...")
 
-        # This is likely where the crash happens
-        if standalone_app_import_ok:
-            await run_slack_app()
-        else:
-            logger.error("Cannot start Slack app - import failed")
+        if not (slack_imports_ok and SLACK_BOT_TOKEN and SLACK_APP_TOKEN):
+            logger.error("❌ Slack tokens missing")
+            return
+
+        # Create minimal Slack app
+        app = AsyncApp(token=SLACK_BOT_TOKEN)
+
+        # Add a simple test handler
+        @app.message("smart picks")
+        async def handle_smart_picks(message, say):
+            await say("Smart Picks is working! 🚀 (Railway-compatible version)")
+
+        @app.message("test")
+        async def handle_test(message, say):
+            await say("Railway + Slack test successful! ✅")
+
+        # Create handler - start it as a background task
+        handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
+
+        logger.info("✅ Railway-compatible Slack app created")
+        logger.info("⚡ Starting Slack handler as background task...")
+
+        # Start as background task instead of awaiting (which blocks forever)
+        asyncio.create_task(handler.start_async())
+
+        logger.info("🎯 Slack app started non-blocking!")
 
     except Exception as e:
-        logger.error(f"💥 Slack app crashed: {e}")
-        # Don't let Slack crash kill the whole server
+        logger.error(f"💥 Slack app error: {e}")
+        # Don't crash the server
 
 async def main():
     """Clean server + test Slack app execution"""
@@ -95,8 +116,8 @@ async def main():
 
     logger.info("✅ Clean server started successfully")
 
-    # Test running Slack app in background
-    slack_task = asyncio.create_task(test_slack_app_start())
+    # Test Railway-compatible Slack app
+    slack_task = asyncio.create_task(create_railway_compatible_slack_app())
 
     # Keep HTTP server running regardless of Slack
     try:
