@@ -1,12 +1,27 @@
 #!/usr/bin/env python3
 """
-Clean server - no Slack imports at all
+Clean server - add Slack step by step
 """
 import asyncio
 import logging
 import os
 from datetime import datetime
 from aiohttp import web
+
+# Test 1: Add minimal Slack imports only
+try:
+    from slack_bolt.async_app import AsyncApp
+    from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+    import dotenv
+    dotenv.load_dotenv()
+
+    SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
+    SLACK_APP_TOKEN = os.getenv('SLACK_APP_TOKEN')
+    slack_imports_ok = True
+    logger.info("✅ Slack imports successful")
+except Exception as e:
+    slack_imports_ok = False
+    logger.error(f"❌ Slack imports failed: {e}")
 
 # Simple logging (no file logging)
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +37,8 @@ async def health(request):
 async def root(request):
     return web.json_response({
         "message": "Clean server is running!",
-        "no_slack": True
+        "slack_imports": slack_imports_ok,
+        "tokens_present": bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN) if slack_imports_ok else False
     })
 
 async def main():
