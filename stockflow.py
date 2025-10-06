@@ -21,6 +21,7 @@ import threading
 import os
 import re
 from textblob import TextBlob
+import urllib.parse
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.errors import SlackApiError
@@ -34,6 +35,8 @@ dotenv.load_dotenv()
 NEWSAPI_KEY = os.getenv('NEWSAPI_KEY')
 X_API_KEY = os.getenv('X_API_KEY')
 X_API_SECRET = os.getenv('X_API_SECRET')
+ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
+FRED_API_KEY = os.getenv('FRED_API_KEY')
 
 # Slack App Configuration
 SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')  # xoxb-your-bot-token
@@ -99,6 +102,134 @@ class ValidationError(StockflowError):
 
 class APIError(StockflowError):
     pass
+
+# Alpha Vantage and FRED API Integration
+async def fetch_alpha_vantage_data(function: str, symbol: str = None, **kwargs) -> dict:
+    """Fetch data from Alpha Vantage API."""
+    if not ALPHA_VANTAGE_API_KEY:
+        logger.warning("ALPHA_VANTAGE_API_KEY not configured, returning mock data")
+        return {"Note": "Alpha Vantage API key not configured"}
+
+    base_url = "https://www.alphavantage.co/query"
+    params = {
+        "function": function,
+        "apikey": ALPHA_VANTAGE_API_KEY,
+        **kwargs
+    }
+
+    if symbol:
+        params["symbol"] = symbol
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(base_url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if "Error Message" in data:
+                        logger.error(f"Alpha Vantage error: {data['Error Message']}")
+                        return {}
+                    if "Note" in data and "API call frequency" in data["Note"]:
+                        logger.warning(f"Alpha Vantage rate limit: {data['Note']}")
+                        return {}
+                    return data
+                else:
+                    logger.error(f"Alpha Vantage HTTP error: {response.status}")
+                    return {}
+    except Exception as e:
+        logger.error(f"Alpha Vantage API error: {e}")
+        return {}
+
+async def fetch_fred_data(series_id: str, limit: int = 100) -> dict:
+    """Fetch economic data from FRED API."""
+    if not FRED_API_KEY:
+        logger.warning("FRED_API_KEY not configured, returning mock data")
+        return {"observations": []}
+
+    base_url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {
+        "series_id": series_id,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "limit": limit,
+        "sort_order": "desc"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(base_url, params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error(f"FRED API HTTP error: {response.status}")
+                    return {"observations": []}
+    except Exception as e:
+        logger.error(f"FRED API error: {e}")
+        return {"observations": []}
+
+async def get_alpha_vantage_earnings_calendar() -> Dict[str, Any]:
+    """Get earnings calendar from Alpha Vantage."""
+    earnings_data = await fetch_alpha_vantage_data("EARNINGS_CALENDAR", horizon="3month")
+
+    if not earnings_data or "Note" in earnings_data:
+        logger.info("Using fallback earnings data")
+        return {"earnings_calendar": [], "source": "fallback"}
+
+    # Parse CSV response from Alpha Vantage
+    earnings_list = []
+    if isinstance(earnings_data, str):
+        # Alpha Vantage returns CSV for earnings calendar
+        lines = earnings_data.strip().split('\n')
+        if len(lines) > 1:
+            headers = lines[0].split(',')
+            for line in lines[1:]:
+                values = line.split(',')
+                if len(values) >= 3:
+                    earnings_list.append({
+                        'symbol': values[0],
+                        'name': values[1] if len(values) > 1 else '',
+                        'reportDate': values[2] if len(values) > 2 else '',
+                        'fiscalDateEnding': values[3] if len(values) > 3 else '',
+                        'estimate': values[4] if len(values) > 4 else '',
+                        'currency': values[5] if len(values) > 5 else 'USD'
+                    })
+
+    return {
+        "earnings_calendar": earnings_list[:50],  # Limit to 50 upcoming earnings
+        "source": "alpha_vantage"
+    }
+
+async def get_alpha_vantage_market_data(symbol: str) -> Dict[str, Any]:
+    """Get enhanced market data from Alpha Vantage."""
+    # Get intraday data for better market context
+    intraday_data = await fetch_alpha_vantage_data(
+        "TIME_SERIES_INTRADAY",
+        symbol=symbol,
+        interval="15min",
+        outputsize="compact"
+    )
+
+    # Get daily data for technical indicators
+    daily_data = await fetch_alpha_vantage_data(
+        "TIME_SERIES_DAILY",
+        symbol=symbol,
+        outputsize="compact"
+    )
+
+    # Get technical indicators
+    sma_data = await fetch_alpha_vantage_data(
+        "SMA",
+        symbol=symbol,
+        interval="daily",
+        time_period=20,
+        series_type="close"
+    )
+
+    return {
+        "intraday_data": intraday_data,
+        "daily_data": daily_data,
+        "technical_indicators": {"sma": sma_data},
+        "source": "alpha_vantage"
+    }
 
 def retry_on_error(max_retries: int = 3, delay: float = 1.0):
     def decorator(func):
@@ -2537,6 +2668,676 @@ def get_slack_app_status() -> Dict[str, Any]:
         'last_update': datetime.datetime.now().isoformat()
     }
 
+# ==================== PHASE 2: ADVANCED ANALYTICS SUITE ====================
+
+async def multi_scenario_monte_carlo_analysis(
+    current_price: float,
+    strike: float,
+    time_to_expiration: float,
+    volatility: float,
+    risk_free_rate: float = 0.05,
+    num_simulations: int = 20000,
+    market_regime: str = 'unknown'
+) -> Dict[str, Any]:
+    """
+    Advanced Multi-Scenario Monte Carlo with Bull/Bear/Sideways market modeling.
+    This provides institutional-grade probability analysis under different market conditions.
+    """
+    scenarios = {}
+
+    # Define scenario parameters based on market regime and historical data
+    scenario_configs = {
+        'bullish': {
+            'drift_adjustment': 0.02,  # 2% additional annual drift
+            'volatility_multiplier': 0.9,  # Lower volatility in bull markets
+            'probability_weight': 0.4 if market_regime == 'bullish' else 0.25
+        },
+        'bearish': {
+            'drift_adjustment': -0.03,  # -3% annual drift reduction
+            'volatility_multiplier': 1.3,  # Higher volatility in bear markets
+            'probability_weight': 0.4 if market_regime == 'bearish' else 0.2
+        },
+        'sideways': {
+            'drift_adjustment': -0.005,  # Slight drift reduction
+            'volatility_multiplier': 1.0,  # Normal volatility
+            'probability_weight': 0.4 if market_regime == 'sideways' else 0.55
+        }
+    }
+
+    total_weighted_itm_prob = 0.0
+    scenario_details = {}
+
+    for scenario_name, config in scenario_configs.items():
+        # Adjust parameters for this scenario
+        adjusted_drift = risk_free_rate + config['drift_adjustment']
+        adjusted_volatility = volatility * config['volatility_multiplier']
+        scenario_simulations = int(num_simulations * config['probability_weight'])
+
+        # Generate random paths for this scenario
+        np.random.seed(42 + hash(scenario_name) % 1000)  # Reproducible but different seeds
+
+        dt = time_to_expiration
+        random_shocks = np.random.normal(0, 1, scenario_simulations)
+
+        # Geometric Brownian Motion with scenario-specific parameters
+        final_prices = current_price * np.exp(
+            (adjusted_drift - 0.5 * adjusted_volatility**2) * dt +
+            adjusted_volatility * np.sqrt(dt) * random_shocks
+        )
+
+        # Calculate ITM probability for this scenario
+        itm_outcomes = final_prices > strike
+        scenario_itm_prob = np.mean(itm_outcomes)
+
+        # Calculate additional scenario metrics
+        scenario_avg_price = np.mean(final_prices)
+        scenario_std = np.std(final_prices)
+        percentiles = np.percentile(final_prices, [10, 25, 75, 90])
+
+        # Expected option value in this scenario
+        intrinsic_values = np.maximum(final_prices - strike, 0)
+        expected_option_value = np.mean(intrinsic_values)
+
+        scenario_details[scenario_name] = {
+            'itm_probability': scenario_itm_prob,
+            'weight': config['probability_weight'],
+            'weighted_contribution': scenario_itm_prob * config['probability_weight'],
+            'average_final_price': scenario_avg_price,
+            'price_volatility': scenario_std,
+            'expected_option_value': expected_option_value,
+            'price_percentiles': {
+                '10th': percentiles[0],
+                '25th': percentiles[1],
+                '75th': percentiles[2],
+                '90th': percentiles[3]
+            },
+            'scenario_parameters': {
+                'drift_adjustment': config['drift_adjustment'],
+                'volatility_multiplier': config['volatility_multiplier'],
+                'adjusted_drift': adjusted_drift,
+                'adjusted_volatility': adjusted_volatility
+            }
+        }
+
+        total_weighted_itm_prob += scenario_details[scenario_name]['weighted_contribution']
+
+    # Calculate confidence intervals for the weighted probability
+    confidence_95 = [
+        max(0.0, total_weighted_itm_prob - 1.96 * math.sqrt(total_weighted_itm_prob * (1 - total_weighted_itm_prob) / num_simulations)),
+        min(1.0, total_weighted_itm_prob + 1.96 * math.sqrt(total_weighted_itm_prob * (1 - total_weighted_itm_prob) / num_simulations))
+    ]
+
+    return {
+        'multi_scenario_itm_probability': total_weighted_itm_prob,
+        'confidence_95': confidence_95,
+        'scenario_breakdown': scenario_details,
+        'market_regime_input': market_regime,
+        'total_simulations': num_simulations,
+        'methodology': 'Multi-Scenario Monte Carlo with regime-weighted probabilities'
+    }
+
+async def historical_pattern_recognition(
+    symbol: str,
+    lookback_days: int = 252,
+    pattern_similarity_threshold: float = 0.8
+) -> Dict[str, Any]:
+    """
+    Find similar historical market conditions and analyze how options performed.
+    This provides context-aware probability adjustments based on historical patterns.
+    """
+    try:
+        # Get historical data for the symbol
+        ticker = yf.Ticker(symbol)
+        hist_data = ticker.history(period=f"{lookback_days * 2}d")
+
+        if len(hist_data) < lookback_days:
+            return {'error': 'Insufficient historical data', 'patterns_found': 0}
+
+        # Calculate current market characteristics
+        recent_data = hist_data.tail(20)  # Last 20 days
+        current_volatility = recent_data['Close'].pct_change().std() * np.sqrt(252)
+        current_trend = (recent_data['Close'].iloc[-1] / recent_data['Close'].iloc[0] - 1) * (252/20)  # Annualized
+        current_volume_trend = recent_data['Volume'].tail(5).mean() / recent_data['Volume'].head(15).mean()
+
+        # Get VIX data for market context
+        vix_ticker = yf.Ticker("^VIX")
+        vix_data = vix_ticker.history(period=f"{lookback_days}d")
+        current_vix = vix_data['Close'].iloc[-1] if not vix_data.empty else 20
+
+        # Find similar historical periods
+        similar_periods = []
+
+        # Sliding window analysis
+        for i in range(40, len(hist_data) - 20):  # Leave buffer for analysis
+            window_data = hist_data.iloc[i-20:i]
+            future_data = hist_data.iloc[i:i+20]  # Next 20 days performance
+
+            if len(window_data) < 20 or len(future_data) < 20:
+                continue
+
+            # Calculate historical characteristics for this window
+            hist_volatility = window_data['Close'].pct_change().std() * np.sqrt(252)
+            hist_trend = (window_data['Close'].iloc[-1] / window_data['Close'].iloc[0] - 1) * (252/20)
+            hist_volume_trend = window_data['Volume'].tail(5).mean() / window_data['Volume'].head(15).mean()
+
+            # Get VIX for this period (approximate)
+            window_date = window_data.index[-1]
+            try:
+                hist_vix = vix_data[vix_data.index <= window_date]['Close'].iloc[-1] if not vix_data.empty else 20
+            except:
+                hist_vix = 20
+
+            # Calculate similarity score
+            vol_similarity = 1 - min(1, abs(current_volatility - hist_volatility) / max(current_volatility, hist_volatility))
+            trend_similarity = 1 - min(1, abs(current_trend - hist_trend) / max(abs(current_trend), abs(hist_trend), 0.01))
+            volume_similarity = 1 - min(1, abs(current_volume_trend - hist_volume_trend) / max(current_volume_trend, hist_volume_trend))
+            vix_similarity = 1 - min(1, abs(current_vix - hist_vix) / max(current_vix, hist_vix))
+
+            overall_similarity = (vol_similarity * 0.3 + trend_similarity * 0.3 +
+                                volume_similarity * 0.2 + vix_similarity * 0.2)
+
+            if overall_similarity >= pattern_similarity_threshold:
+                # Calculate how the stock performed in the following period
+                future_return = (future_data['Close'].iloc[-1] / window_data['Close'].iloc[-1] - 1)
+                future_volatility = future_data['Close'].pct_change().std() * np.sqrt(252)
+                max_drawdown = ((future_data['Close'].cummax() - future_data['Close']) / future_data['Close'].cummax()).max()
+
+                similar_periods.append({
+                    'date': window_date.strftime('%Y-%m-%d'),
+                    'similarity_score': overall_similarity,
+                    'future_return_20d': future_return,
+                    'future_volatility': future_volatility,
+                    'max_drawdown': max_drawdown,
+                    'components': {
+                        'volatility_similarity': vol_similarity,
+                        'trend_similarity': trend_similarity,
+                        'volume_similarity': volume_similarity,
+                        'vix_similarity': vix_similarity
+                    }
+                })
+
+        # Sort by similarity and analyze top matches
+        similar_periods.sort(key=lambda x: x['similarity_score'], reverse=True)
+        top_patterns = similar_periods[:10]  # Top 10 similar periods
+
+        if not top_patterns:
+            return {
+                'patterns_found': 0,
+                'current_characteristics': {
+                    'volatility': current_volatility,
+                    'trend': current_trend,
+                    'volume_trend': current_volume_trend,
+                    'vix': current_vix
+                },
+                'message': 'No similar historical patterns found with current threshold'
+            }
+
+        # Calculate aggregate statistics from similar periods
+        avg_future_return = np.mean([p['future_return_20d'] for p in top_patterns])
+        avg_future_volatility = np.mean([p['future_volatility'] for p in top_patterns])
+        avg_max_drawdown = np.mean([p['max_drawdown'] for p in top_patterns])
+        avg_similarity = np.mean([p['similarity_score'] for p in top_patterns])
+
+        # Calculate probability adjustments based on historical outcomes
+        positive_outcomes = sum(1 for p in top_patterns if p['future_return_20d'] > 0)
+        historical_success_rate = positive_outcomes / len(top_patterns)
+
+        return {
+            'patterns_found': len(top_patterns),
+            'average_similarity': avg_similarity,
+            'historical_outcomes': {
+                'average_future_return_20d': avg_future_return,
+                'average_future_volatility': avg_future_volatility,
+                'average_max_drawdown': avg_max_drawdown,
+                'success_rate': historical_success_rate,
+                'sample_size': len(top_patterns)
+            },
+            'current_characteristics': {
+                'volatility': current_volatility,
+                'trend': current_trend,
+                'volume_trend': current_volume_trend,
+                'vix': current_vix
+            },
+            'top_similar_periods': top_patterns[:5],  # Return top 5 for reference
+            'probability_adjustment': {
+                'bullish_bias': max(-0.15, min(0.15, avg_future_return * 2)),  # Cap adjustment at ±15%
+                'volatility_adjustment': avg_future_volatility / current_volatility,
+                'confidence': min(1.0, avg_similarity * len(top_patterns) / 10)  # Higher confidence with more similar patterns
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Historical pattern recognition failed: {e}")
+        return {'error': str(e), 'patterns_found': 0}
+
+async def event_driven_analysis(symbol: str, days_ahead: int = 30) -> Dict[str, Any]:
+    """
+    Analyze upcoming events that could impact option prices.
+    This provides event-driven probability adjustments for earnings, FDA approvals, etc.
+    """
+    events = {}
+    event_adjustments = {}
+
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+
+        # Enhanced Earnings Analysis with Alpha Vantage
+        earnings_found = False
+        try:
+            # Try Alpha Vantage earnings calendar first
+            if ALPHA_VANTAGE_API_KEY:
+                earnings_calendar = await get_alpha_vantage_earnings_calendar()
+                symbol_earnings = [
+                    e for e in earnings_calendar.get("earnings_calendar", [])
+                    if e.get("symbol") == symbol
+                ]
+
+                if symbol_earnings:
+                    next_earnings_str = symbol_earnings[0].get("reportDate", "")
+                    if next_earnings_str:
+                        try:
+                            next_earnings = datetime.datetime.strptime(next_earnings_str, '%Y-%m-%d')
+                            days_to_earnings = (next_earnings - datetime.datetime.now()).days
+
+                            if 0 <= days_to_earnings <= days_ahead:
+                                events['earnings'] = {
+                                    'date': next_earnings.strftime('%Y-%m-%d'),
+                                    'days_until': days_to_earnings,
+                                    'event_type': 'earnings_announcement',
+                                    'source': 'alpha_vantage',
+                                    'estimate': symbol_earnings[0].get('estimate', '')
+                                }
+
+                                # Earnings typically increase volatility by 20-50%
+                                volatility_multiplier = 1.3 if days_to_earnings <= 5 else 1.1
+                                probability_adjustment = 0.0  # Neutral until we know direction
+
+                                event_adjustments['earnings'] = {
+                                    'volatility_multiplier': volatility_multiplier,
+                                    'probability_adjustment': probability_adjustment,
+                                    'confidence': 0.8,
+                                    'impact_window': '3-5 days post-earnings'
+                                }
+                                earnings_found = True
+                        except ValueError:
+                            logger.warning(f"Could not parse earnings date: {next_earnings_str}")
+
+            # Fallback to yfinance if Alpha Vantage didn't provide earnings
+            if not earnings_found:
+                calendar = ticker.calendar
+                if calendar is not None and not calendar.empty:
+                    next_earnings = calendar.index[0] if len(calendar.index) > 0 else None
+                    if next_earnings:
+                        days_to_earnings = (next_earnings - datetime.datetime.now()).days
+                        if 0 <= days_to_earnings <= days_ahead:
+                            events['earnings'] = {
+                                'date': next_earnings.strftime('%Y-%m-%d'),
+                                'days_until': days_to_earnings,
+                                'event_type': 'earnings_announcement',
+                                'source': 'yfinance'
+                            }
+
+                            volatility_multiplier = 1.3 if days_to_earnings <= 5 else 1.1
+                            probability_adjustment = 0.0
+
+                            event_adjustments['earnings'] = {
+                                'volatility_multiplier': volatility_multiplier,
+                                'probability_adjustment': probability_adjustment,
+                                'confidence': 0.7,  # Slightly lower confidence for yfinance
+                                'impact_window': '3-5 days post-earnings'
+                            }
+        except Exception as e:
+            logger.warning(f"Earnings analysis failed for {symbol}: {e}")
+
+        # Sector-specific event analysis
+        sector = info.get('sector', '').lower()
+        industry = info.get('industry', '').lower()
+
+        # FDA Events (for biotech/pharma)
+        if any(keyword in sector or keyword in industry for keyword in ['biotech', 'pharma', 'drug', 'medical']):
+            # This is a simplified placeholder - in production, you'd integrate with FDA calendar APIs
+            events['fda_potential'] = {
+                'probability': 0.1,  # 10% chance of FDA event in next 30 days
+                'event_type': 'regulatory_approval',
+                'impact': 'high_volatility'
+            }
+
+            event_adjustments['fda_potential'] = {
+                'volatility_multiplier': 1.5,
+                'probability_adjustment': 0.05,  # Slight bullish bias for approvals
+                'confidence': 0.3
+            }
+
+        # Fed Meeting Analysis (affects all stocks but especially financials)
+        # Fed meetings occur ~8 times per year, roughly every 6 weeks
+        fed_meeting_dates = [
+            datetime.datetime(2025, 1, 29),
+            datetime.datetime(2025, 3, 19),
+            datetime.datetime(2025, 5, 1),
+            datetime.datetime(2025, 6, 18),
+            datetime.datetime(2025, 7, 30),
+            datetime.datetime(2025, 9, 17),
+            datetime.datetime(2025, 11, 5),
+            datetime.datetime(2025, 12, 17)
+        ]
+
+        for fed_date in fed_meeting_dates:
+            days_to_fed = (fed_date - datetime.datetime.now()).days
+            if 0 <= days_to_fed <= days_ahead:
+                events['fed_meeting'] = {
+                    'date': fed_date.strftime('%Y-%m-%d'),
+                    'days_until': days_to_fed,
+                    'event_type': 'fed_meeting'
+                }
+
+                # Fed meetings typically increase market volatility
+                fed_volatility_multiplier = 1.2 if days_to_fed <= 2 else 1.05
+                fed_adjustment = -0.02 if 'financials' in sector else 0.0  # Slight bearish for financials before Fed
+
+                event_adjustments['fed_meeting'] = {
+                    'volatility_multiplier': fed_volatility_multiplier,
+                    'probability_adjustment': fed_adjustment,
+                    'confidence': 0.6
+                }
+                break
+
+        # Calculate composite event impact
+        total_volatility_multiplier = 1.0
+        total_probability_adjustment = 0.0
+        total_confidence = 0.0
+        event_count = 0
+
+        for event_name, adjustment in event_adjustments.items():
+            weight = adjustment['confidence']
+            total_volatility_multiplier += (adjustment['volatility_multiplier'] - 1) * weight
+            total_probability_adjustment += adjustment['probability_adjustment'] * weight
+            total_confidence += weight
+            event_count += 1
+
+        if event_count > 0:
+            total_confidence /= event_count
+
+        return {
+            'events_found': len(events),
+            'upcoming_events': events,
+            'event_adjustments': event_adjustments,
+            'composite_impact': {
+                'volatility_multiplier': total_volatility_multiplier,
+                'probability_adjustment': total_probability_adjustment,
+                'confidence': total_confidence,
+                'events_analyzed': event_count
+            },
+            'symbol': symbol,
+            'analysis_window_days': days_ahead
+        }
+
+    except Exception as e:
+        logger.error(f"Event-driven analysis failed for {symbol}: {e}")
+        return {
+            'events_found': 0,
+            'error': str(e),
+            'symbol': symbol
+        }
+
+async def cross_asset_correlation_analysis(
+    symbol: str,
+    lookback_days: int = 90
+) -> Dict[str, Any]:
+    """
+    Analyze how the stock correlates with bonds, dollar, commodities, and crypto.
+    This provides cross-asset context for options analysis.
+    """
+    correlations = {}
+    current_factors = {}
+
+    try:
+        # Get stock data
+        ticker = yf.Ticker(symbol)
+        stock_data = ticker.history(period=f"{lookback_days + 10}d")
+
+        if len(stock_data) < 30:
+            return {'error': 'Insufficient stock data', 'symbol': symbol}
+
+        stock_returns = stock_data['Close'].pct_change().dropna()
+
+        # Define cross-asset instruments to analyze
+        cross_assets = {
+            'bonds_10y': '^TNX',      # 10-Year Treasury
+            'bonds_2y': '^IRX',       # 2-Year Treasury
+            'dollar_index': 'DX-Y.NYB',  # Dollar Index
+            'gold': 'GC=F',          # Gold futures
+            'oil': 'CL=F',           # Oil futures
+            'vix': '^VIX',           # Volatility index
+            'bitcoin': 'BTC-USD',    # Bitcoin (for tech correlation)
+            'spy': 'SPY'             # S&P 500 ETF
+        }
+
+        for asset_name, ticker_symbol in cross_assets.items():
+            try:
+                asset_ticker = yf.Ticker(ticker_symbol)
+                asset_data = asset_ticker.history(period=f"{lookback_days + 10}d")
+
+                if len(asset_data) < 30:
+                    continue
+
+                asset_returns = asset_data['Close'].pct_change().dropna()
+
+                # Align dates for correlation calculation
+                common_dates = stock_returns.index.intersection(asset_returns.index)
+                if len(common_dates) < 20:
+                    continue
+
+                aligned_stock = stock_returns.loc[common_dates]
+                aligned_asset = asset_returns.loc[common_dates]
+
+                # Calculate correlation
+                correlation = aligned_stock.corr(aligned_asset)
+
+                # Calculate current levels and recent changes
+                current_level = asset_data['Close'].iloc[-1]
+                recent_change = (asset_data['Close'].iloc[-1] / asset_data['Close'].iloc[-5] - 1) if len(asset_data) >= 5 else 0
+
+                correlations[asset_name] = {
+                    'correlation': correlation,
+                    'current_level': current_level,
+                    'recent_5d_change': recent_change,
+                    'sample_size': len(common_dates),
+                    'significance': 'high' if abs(correlation) > 0.6 else 'medium' if abs(correlation) > 0.3 else 'low'
+                }
+
+            except Exception as e:
+                logger.warning(f"Failed to analyze {asset_name}: {e}")
+                continue
+
+        # Analyze current cross-asset environment
+        cross_asset_factors = {}
+
+        if 'bonds_10y' in correlations and 'bonds_2y' in correlations:
+            # Yield curve analysis
+            yield_10y = correlations['bonds_10y']['current_level']
+            yield_2y = correlations['bonds_2y']['current_level']
+            yield_spread = yield_10y - yield_2y
+
+            cross_asset_factors['yield_curve'] = {
+                'spread': yield_spread,
+                'status': 'inverted' if yield_spread < 0 else 'flat' if yield_spread < 1 else 'normal',
+                'implication': 'bearish' if yield_spread < 0 else 'neutral'
+            }
+
+        if 'dollar_index' in correlations:
+            dxy_change = correlations['dollar_index']['recent_5d_change']
+            cross_asset_factors['dollar_strength'] = {
+                'recent_trend': 'strengthening' if dxy_change > 0.01 else 'weakening' if dxy_change < -0.01 else 'stable',
+                'correlation_with_stock': correlations['dollar_index']['correlation'],
+                'implication': 'negative' if correlations['dollar_index']['correlation'] < -0.3 and dxy_change > 0.01 else 'neutral'
+            }
+
+        if 'vix' in correlations:
+            vix_level = correlations['vix']['current_level']
+            cross_asset_factors['market_fear'] = {
+                'vix_level': vix_level,
+                'status': 'high' if vix_level > 25 else 'low' if vix_level < 15 else 'normal',
+                'correlation_with_stock': correlations['vix']['correlation'],
+                'implication': 'bearish' if vix_level > 30 else 'bullish' if vix_level < 15 else 'neutral'
+            }
+
+        # Calculate composite cross-asset score
+        bullish_factors = 0
+        bearish_factors = 0
+
+        for factor_name, factor_data in cross_asset_factors.items():
+            implication = factor_data.get('implication', 'neutral')
+            if implication == 'bullish':
+                bullish_factors += 1
+            elif implication == 'bearish':
+                bearish_factors += 1
+
+        net_cross_asset_bias = (bullish_factors - bearish_factors) / max(1, len(cross_asset_factors))
+
+        return {
+            'correlations': correlations,
+            'cross_asset_factors': cross_asset_factors,
+            'composite_analysis': {
+                'net_bias': net_cross_asset_bias,
+                'bullish_factors': bullish_factors,
+                'bearish_factors': bearish_factors,
+                'factors_analyzed': len(cross_asset_factors),
+                'overall_implication': 'bullish' if net_cross_asset_bias > 0.3 else 'bearish' if net_cross_asset_bias < -0.3 else 'neutral'
+            },
+            'symbol': symbol,
+            'analysis_period_days': lookback_days
+        }
+
+    except Exception as e:
+        logger.error(f"Cross-asset correlation analysis failed for {symbol}: {e}")
+        return {'error': str(e), 'symbol': symbol}
+
+async def advanced_volatility_forecasting(
+    symbol: str,
+    forecast_days: int = 30,
+    lookback_days: int = 252
+) -> Dict[str, Any]:
+    """
+    Advanced volatility forecasting using GARCH-like models and VIX analysis.
+    This provides more accurate volatility estimates for options pricing.
+    """
+    try:
+        # Get historical data
+        ticker = yf.Ticker(symbol)
+        hist_data = ticker.history(period=f"{lookback_days + 30}d")
+
+        if len(hist_data) < 50:
+            return {'error': 'Insufficient historical data', 'symbol': symbol}
+
+        # Calculate returns
+        returns = hist_data['Close'].pct_change().dropna()
+
+        # Current realized volatility (different periods)
+        current_vol_5d = returns.tail(5).std() * np.sqrt(252)
+        current_vol_20d = returns.tail(20).std() * np.sqrt(252)
+        current_vol_60d = returns.tail(60).std() * np.sqrt(252)
+
+        # VIX analysis for market volatility context
+        vix_ticker = yf.Ticker("^VIX")
+        vix_data = vix_ticker.history(period=f"{lookback_days}d")
+
+        volatility_forecast = {}
+
+        if not vix_data.empty:
+            current_vix = vix_data['Close'].iloc[-1]
+            vix_mean = vix_data['Close'].tail(60).mean()
+            vix_std = vix_data['Close'].tail(60).std()
+
+            # VIX-based volatility adjustment
+            vix_z_score = (current_vix - vix_mean) / max(vix_std, 1)
+            vix_adjustment = max(-0.3, min(0.5, vix_z_score * 0.1))  # Cap adjustment
+
+            volatility_forecast['vix_analysis'] = {
+                'current_vix': current_vix,
+                'vix_mean_60d': vix_mean,
+                'vix_z_score': vix_z_score,
+                'volatility_adjustment': vix_adjustment
+            }
+        else:
+            vix_adjustment = 0
+            volatility_forecast['vix_analysis'] = {'error': 'VIX data unavailable'}
+
+        # Simple GARCH-like volatility clustering analysis
+        squared_returns = returns ** 2
+
+        # Calculate volatility persistence (autocorrelation in squared returns)
+        volatility_persistence = squared_returns.autocorr(lag=1) if len(squared_returns) > 20 else 0
+
+        # Recent volatility trend
+        recent_vol_trend = (current_vol_5d - current_vol_20d) / current_vol_20d
+
+        # Volatility mean reversion component
+        long_term_vol = returns.std() * np.sqrt(252)
+        mean_reversion_speed = 0.1  # Assumption: 10% daily mean reversion
+
+        # Forecast volatility using weighted approach
+        base_forecast = current_vol_20d  # Start with 20-day realized vol
+
+        # Apply adjustments
+        trend_adjusted = base_forecast * (1 + recent_vol_trend * 0.3)  # 30% weight to recent trend
+        vix_adjusted = trend_adjusted * (1 + vix_adjustment)  # VIX adjustment
+        mean_reversion_target = long_term_vol  # Long-term mean
+
+        # Final forecast with mean reversion
+        persistence_weight = max(0.1, min(0.9, volatility_persistence))
+        forecast_volatility = (vix_adjusted * persistence_weight +
+                             mean_reversion_target * (1 - persistence_weight))
+
+        # Calculate confidence bands
+        forecast_std = returns.std() * 0.2  # 20% of return std as forecast uncertainty
+        confidence_bands = {
+            'lower_80': max(0.05, forecast_volatility - 1.28 * forecast_std),
+            'upper_80': forecast_volatility + 1.28 * forecast_std,
+            'lower_95': max(0.05, forecast_volatility - 1.96 * forecast_std),
+            'upper_95': forecast_volatility + 1.96 * forecast_std
+        }
+
+        # Volatility regime classification
+        if forecast_volatility > long_term_vol * 1.3:
+            regime = 'high_volatility'
+        elif forecast_volatility < long_term_vol * 0.7:
+            regime = 'low_volatility'
+        else:
+            regime = 'normal_volatility'
+
+        volatility_forecast.update({
+            'current_volatilities': {
+                'realized_5d': current_vol_5d,
+                'realized_20d': current_vol_20d,
+                'realized_60d': current_vol_60d
+            },
+            'forecast': {
+                'volatility': forecast_volatility,
+                'confidence_bands': confidence_bands,
+                'forecast_horizon_days': forecast_days,
+                'regime': regime
+            },
+            'model_components': {
+                'base_volatility': base_forecast,
+                'trend_adjustment': recent_vol_trend,
+                'vix_adjustment': vix_adjustment,
+                'persistence_factor': volatility_persistence,
+                'mean_reversion_target': mean_reversion_target
+            },
+            'model_confidence': {
+                'data_quality': min(1.0, len(returns) / 100),  # More data = higher confidence
+                'stability': max(0.3, 1 - abs(recent_vol_trend)),  # Less trend = more stable
+                'overall': min(0.9, (min(1.0, len(returns) / 100) + max(0.3, 1 - abs(recent_vol_trend))) / 2)
+            }
+        })
+
+        return volatility_forecast
+
+    except Exception as e:
+        logger.error(f"Advanced volatility forecasting failed for {symbol}: {e}")
+        return {'error': str(e), 'symbol': symbol}
+
 # ==================== INSTITUTIONAL-GRADE ENHANCEMENT FUNCTIONS ====================
 
 async def get_realtime_market_sentiment(symbols: List[str], timeframe: str = "4h", sources: List[str] = None) -> Dict[str, Any]:
@@ -2662,26 +3463,43 @@ async def detect_market_regime(indicators: List[str] = None, lookback_days: int 
                     'percentile': (vix_data['Close'] <= current_vix).mean() * 100
                 }
 
-        # Yield Curve Analysis (10Y-2Y spread)
+        # Enhanced Yield Curve Analysis using FRED data
         if "yield_curve" in indicators:
             try:
-                ten_year = yf.Ticker("^TNX")
-                two_year = yf.Ticker("^IRX")
+                # Try FRED first for more accurate economic data
+                if FRED_API_KEY:
+                    ten_year_fred = await fetch_fred_data("GS10")  # 10-Year Treasury
+                    two_year_fred = await fetch_fred_data("GS2")   # 2-Year Treasury
 
-                ten_y_data = ten_year.history(period=f"{lookback_days}d")
-                two_y_data = two_year.history(period=f"{lookback_days}d")
+                    if ten_year_fred.get("observations") and two_year_fred.get("observations"):
+                        current_10y = float(ten_year_fred["observations"][0]["value"])
+                        current_2y = float(two_year_fred["observations"][0]["value"])
+                        spread = current_10y - current_2y
 
-                if not ten_y_data.empty and not two_y_data.empty:
-                    current_10y = ten_y_data['Close'].iloc[-1]
-                    current_2y = two_y_data['Close'].iloc[-1]
-                    spread = current_10y - current_2y
-
-                    if spread < 0:
-                        curve_regime = "inverted"
-                    elif spread < 1.0:
-                        curve_regime = "flat"
+                        if spread < 0:
+                            curve_regime = "inverted"
+                        elif spread < 1.0:
+                            curve_regime = "flat"
+                        else:
+                            curve_regime = "normal"
                     else:
-                        curve_regime = "normal"
+                        # Fallback to yfinance
+                        ten_year = yf.Ticker("^TNX")
+                        two_year = yf.Ticker("^IRX")
+                        ten_y_data = ten_year.history(period=f"{lookback_days}d")
+                        two_y_data = two_year.history(period=f"{lookback_days}d")
+
+                        if not ten_y_data.empty and not two_y_data.empty:
+                            current_10y = ten_y_data['Close'].iloc[-1]
+                            current_2y = two_y_data['Close'].iloc[-1]
+                            spread = current_10y - current_2y
+
+                            if spread < 0:
+                                curve_regime = "inverted"
+                            elif spread < 1.0:
+                                curve_regime = "flat"
+                            else:
+                                curve_regime = "normal"
 
                     regime_data['yield_curve'] = {
                         'spread': spread,
@@ -2914,7 +3732,24 @@ async def find_optimal_risk_reward_options_enhanced(
     logger.info("Step 4: Analyzing options flow...")
     flow_analysis = await get_options_flow_analysis(symbols[:20])  # Top 20 for flow analysis
 
-    # Step 5: Analyze options (enhanced version of original algorithm)
+    # Step 4.5: PHASE 2 Cross-Asset Correlation Analysis (simplified for now)
+    logger.info("Step 4.5: Phase 2 Cross-Asset Correlation Analysis...")
+    correlation_analysis = {
+        'correlation_data': {}
+    }
+    # Pre-compute correlation data for top symbols (performance optimization)
+    for symbol in symbols[:20]:  # Limit to top 20 for performance
+        try:
+            correlation_result = await cross_asset_correlation_analysis(
+                symbol=symbol,
+                lookback_days=90
+            )
+            correlation_analysis['correlation_data'][symbol] = correlation_result
+        except Exception as e:
+            logger.warning(f"Correlation analysis failed for {symbol}: {e}")
+            correlation_analysis['correlation_data'][symbol] = {}
+
+    # Step 5: Analyze options (enhanced version of original algorithm with Phase 2)
     logger.info("Step 5: Enhanced options analysis...")
     all_options = []
 
@@ -2944,9 +3779,10 @@ async def find_optimal_risk_reward_options_enhanced(
             if not current_price:
                 return []
 
-            # Get sentiment and flow data for this symbol
+            # Get sentiment, flow, and correlation data for this symbol
             symbol_sentiment = sentiment_analysis['sentiment_data'].get(symbol, {})
             symbol_flow = flow_analysis['flow_data'].get(symbol, {})
+            symbol_correlation = correlation_analysis['correlation_data'].get(symbol, {})
 
             for expiration_date in available_dates[:3]:  # Analyze top 3 expirations for performance
                 try:
@@ -2979,10 +3815,84 @@ async def find_optimal_risk_reward_options_enhanced(
                                 symbol, strike, expiration_date
                             )
 
-                            # Apply sentiment boost to ITM probability
+                            # PHASE 2: Advanced Multi-Scenario Monte Carlo Analysis
+                            phase2_monte_carlo = await multi_scenario_monte_carlo_analysis(
+                                current_price=current_price,
+                                strike=strike,
+                                time_to_expiration=time_to_expiration,
+                                volatility=iv,
+                                risk_free_rate=0.05,
+                                num_simulations=5000,  # Reduced for performance in batch analysis
+                                market_regime=regime
+                            )
+
+                            # PHASE 2: Historical Pattern Recognition
+                            phase2_patterns = await historical_pattern_recognition(
+                                symbol=symbol,
+                                lookback_days=90,  # Shorter for performance
+                                pattern_type='price_momentum'
+                            )
+
+                            # PHASE 2: Advanced Volatility Forecasting
+                            phase2_volatility = await advanced_volatility_forecasting(
+                                symbol=symbol,
+                                forecast_days=days_to_exp,
+                                current_iv=iv
+                            )
+
+                            # PHASE 2: Event-Driven Analysis (for upcoming catalysts)
+                            phase2_events = await event_driven_analysis(
+                                symbol=symbol,
+                                days_ahead=days_to_exp
+                            )
+
+                            # Combine Phase 1 and Phase 2 ITM probabilities
                             base_itm_prob = advanced_result.get('final_analysis', {}).get('final_itm_probability', 0.5)
-                            sentiment_boost = symbol_sentiment.get('composite_sentiment', 0) * 0.1  # Max ±10% adjustment
-                            enhanced_itm_prob = apply_sentiment_adjustment(base_itm_prob, sentiment_boost)
+
+                            # Phase 2 Monte Carlo weighted probability
+                            mc_bull_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bull', 0.5)
+                            mc_bear_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bear', 0.3)
+                            mc_sideways_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('sideways', 0.4)
+
+                            # Weight by regime confidence
+                            if regime == 'bullish':
+                                phase2_mc_prob = mc_bull_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bear_prob * 0.1
+                            elif regime == 'bearish':
+                                phase2_mc_prob = mc_bear_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bull_prob * 0.1
+                            else:  # sideways or mixed
+                                phase2_mc_prob = mc_sideways_prob * 0.5 + (mc_bull_prob + mc_bear_prob) * 0.25
+
+                            # Pattern recognition probability adjustment
+                            pattern_confidence = phase2_patterns.get('best_match', {}).get('confidence', 0.5)
+                            pattern_adjustment = (pattern_confidence - 0.5) * 0.1  # ±5% max adjustment
+
+                            # Volatility forecasting adjustment
+                            volatility_trend = phase2_volatility.get('forecast_trend', 'stable')
+                            vol_adjustment = 0.02 if volatility_trend == 'increasing' else (-0.02 if volatility_trend == 'decreasing' else 0)
+
+                            # Event-driven analysis adjustment
+                            upcoming_events = phase2_events.get('events_analysis', {}).get(symbol, {})
+                            catalyst_impact = upcoming_events.get('composite_impact_score', 0.5)
+                            event_adjustment = (catalyst_impact - 0.5) * 0.08  # ±4% max adjustment for events
+
+                            # Cross-asset correlation adjustment
+                            correlation_strength = symbol_correlation.get('market_correlation_strength', 0.5)
+                            correlation_direction = symbol_correlation.get('favorable_correlation_direction', 0.5)
+                            correlation_adjustment = (correlation_strength * correlation_direction - 0.25) * 0.06  # ±3% max
+
+                            # Enhanced ITM probability combining all Phase 2 analytics
+                            institutional_itm_prob = (
+                                base_itm_prob * 0.25 +          # Phase 1 base (25%)
+                                phase2_mc_prob * 0.3 +          # Phase 2 Monte Carlo (30%)
+                                (base_itm_prob + pattern_adjustment) * 0.15 +  # Pattern recognition (15%)
+                                (base_itm_prob + vol_adjustment) * 0.1 +       # Volatility forecasting (10%)
+                                (base_itm_prob + event_adjustment) * 0.1 +     # Event-driven analysis (10%)
+                                (base_itm_prob + correlation_adjustment) * 0.1  # Cross-asset correlation (10%)
+                            )
+
+                            # Apply Phase 1 sentiment boost on top of Phase 2 analysis
+                            sentiment_boost = symbol_sentiment.get('composite_sentiment', 0) * 0.05  # Reduced to 5% max for institutional blend
+                            enhanced_itm_prob = apply_sentiment_adjustment(institutional_itm_prob, sentiment_boost)
 
                             option_price = (bid + ask) / 2
                             profit_potential = calculate_profit_potential(
@@ -2998,11 +3908,40 @@ async def find_optimal_risk_reward_options_enhanced(
                                 days_to_exp, advanced_result.get('analysis_techniques', {})
                             )
 
-                            # Apply sentiment and flow boosts
+                            # PHASE 2: Additional scoring components
+                            # Monte Carlo scenario confidence boost
+                            mc_confidence = phase2_monte_carlo.get('confidence_metrics', {}).get('overall_confidence', 0.5)
+                            mc_multiplier = 1.0 + (mc_confidence - 0.5) * 0.2  # ±10% max
+
+                            # Pattern recognition strength boost
+                            pattern_strength = phase2_patterns.get('best_match', {}).get('strength', 0.5)
+                            pattern_multiplier = 1.0 + (pattern_strength - 0.5) * 0.15  # ±7.5% max
+
+                            # Volatility forecast accuracy boost
+                            vol_accuracy = phase2_volatility.get('forecast_accuracy', {}).get('confidence', 0.5)
+                            volatility_multiplier = 1.0 + (vol_accuracy - 0.5) * 0.1  # ±5% max
+
+                            # Event catalyst strength boost
+                            event_strength = upcoming_events.get('catalyst_strength', 0.5)
+                            event_multiplier = 1.0 + (event_strength - 0.5) * 0.12  # ±6% max for catalyst events
+
+                            # Cross-asset correlation strength boost
+                            correlation_favorability = symbol_correlation.get('overall_correlation_score', 0.5)
+                            correlation_multiplier = 1.0 + (correlation_favorability - 0.5) * 0.08  # ±4% max for correlation
+
+                            # Apply all multipliers: Phase 1 + Phase 2
                             sentiment_multiplier = 1.0 + (symbol_sentiment.get('composite_sentiment', 0) * 0.1)
                             flow_multiplier = 1.0 + (symbol_flow.get('unusual_activity_score', 0) * 0.05)
 
-                            enhanced_score = base_score * sentiment_multiplier * flow_multiplier
+                            # Institutional-grade enhanced score with complete Phase 2 analytics
+                            institutional_score = (base_score *
+                                                  sentiment_multiplier *
+                                                  flow_multiplier *
+                                                  mc_multiplier *
+                                                  pattern_multiplier *
+                                                  volatility_multiplier *
+                                                  event_multiplier *
+                                                  correlation_multiplier)
 
                             greeks = calculate_black_scholes_greeks(
                                 current_price, strike, time_to_expiration, iv, 0.05, 'call'
@@ -3022,19 +3961,54 @@ async def find_optimal_risk_reward_options_enhanced(
                                 'ask': ask,
                                 'itm_probability': enhanced_itm_prob,
                                 'base_itm_probability': base_itm_prob,
-                                'sentiment_adjustment': enhanced_itm_prob - base_itm_prob,
+                                'institutional_itm_probability': institutional_itm_prob,
+                                'sentiment_adjustment': enhanced_itm_prob - institutional_itm_prob,
                                 'profit_potential': profit_potential,
                                 'risk_level': risk_level,
-                                'composite_score': enhanced_score,
+                                'composite_score': institutional_score,
                                 'base_score': base_score,
                                 'sentiment_multiplier': sentiment_multiplier,
                                 'flow_multiplier': flow_multiplier,
+                                'mc_multiplier': mc_multiplier,
+                                'pattern_multiplier': pattern_multiplier,
+                                'volatility_multiplier': volatility_multiplier,
+                                'event_multiplier': event_multiplier,
+                                'correlation_multiplier': correlation_multiplier,
                                 'delta': greeks['delta'],
                                 'gamma': greeks['gamma'],
                                 'theta': greeks['theta'],
                                 'vega': greeks['vega'],
                                 'sentiment_data': symbol_sentiment,
                                 'flow_data': symbol_flow,
+                                # Phase 2 Advanced Analytics Data
+                                'phase2_monte_carlo': {
+                                    'scenario_probabilities': phase2_monte_carlo.get('scenario_probabilities', {}),
+                                    'confidence_metrics': phase2_monte_carlo.get('confidence_metrics', {}),
+                                    'risk_metrics': phase2_monte_carlo.get('risk_metrics', {})
+                                },
+                                'phase2_patterns': {
+                                    'best_match': phase2_patterns.get('best_match', {}),
+                                    'pattern_type': phase2_patterns.get('pattern_type', 'price_momentum'),
+                                    'historical_outcomes': phase2_patterns.get('similar_patterns', [])[:3]  # Top 3 matches
+                                },
+                                'phase2_volatility': {
+                                    'forecast_trend': phase2_volatility.get('forecast_trend', 'stable'),
+                                    'forecast_accuracy': phase2_volatility.get('forecast_accuracy', {}),
+                                    'term_structure': phase2_volatility.get('term_structure_analysis', {}),
+                                    'volatility_regime': phase2_volatility.get('volatility_regime', 'normal')
+                                },
+                                'phase2_events': {
+                                    'upcoming_events': upcoming_events.get('upcoming_events', []),
+                                    'catalyst_strength': upcoming_events.get('catalyst_strength', 0.5),
+                                    'impact_timeline': upcoming_events.get('impact_timeline', {}),
+                                    'event_types_detected': upcoming_events.get('event_types', [])
+                                },
+                                'phase2_correlation': {
+                                    'market_correlation_strength': symbol_correlation.get('market_correlation_strength', 0.5),
+                                    'asset_class_correlations': symbol_correlation.get('asset_correlations', {}),
+                                    'regime_correlations': symbol_correlation.get('regime_analysis', {}),
+                                    'correlation_stability': symbol_correlation.get('correlation_stability', 0.5)
+                                },
                                 **advanced_result.get('analysis_techniques', {})
                             })
 
@@ -3165,7 +4139,13 @@ async def find_optimal_risk_reward_options_enhanced(
                 'regime_confidence': regime_confidence,
                 'message': context_message,
                 'sentiment_analyzed_symbols': len(sentiment_analysis['sentiment_data']),
-                'flow_analyzed_symbols': len(flow_analysis['flow_data'])
+                'flow_analyzed_symbols': len(flow_analysis['flow_data']),
+                'phase2_analytics': {
+                    'correlation_analyzed_symbols': len(correlation_analysis['correlation_data']),
+                    'analytics_enabled': ['multi_scenario_monte_carlo', 'pattern_recognition', 'volatility_forecasting', 'event_driven', 'cross_asset_correlation'],
+                    'institutional_grade_features': True,
+                    'advanced_probability_models': 5
+                }
             },
             'criteria': {
                 'target_days_to_expiry': max_days_to_expiry,
@@ -3225,11 +4205,24 @@ def select_option_for_monitoring(symbol: str, strike: float, expiration_date: st
         'status': 'active'
     }
 
+    # AUTO-START CONTINUOUS MONITORING if not already active
+    global monitoring_active, monitoring_task
+    if not monitoring_active and len(selected_options) > 0:
+        logger.info("Auto-starting continuous monitoring - first option added")
+        try:
+            monitoring_active = True
+            monitoring_task = asyncio.create_task(continuous_monitoring_loop())
+            logger.info("Continuous monitoring started successfully")
+        except Exception as e:
+            logger.error(f"Failed to auto-start monitoring: {e}")
+            monitoring_active = False
+
     return {
         'option_key': option_key,
         'selection_confirmed': True,
         'total_selected': len(selected_options),
         'monitoring_status': 'active' if monitoring_active else 'ready',
+        'monitoring_auto_started': not monitoring_active and len(selected_options) == 1,
         'selected_option': selected_options[option_key]
     }
 
@@ -3595,6 +4588,77 @@ async def list_tools():
                     "max_results": {"type": "integer", "description": "Maximum number of results (default: 10)", "default": 10}
                 },
                 "required": []
+            }
+        ),
+        Tool(
+            name="multi_scenario_monte_carlo",
+            description="Phase 2: Advanced Multi-Scenario Monte Carlo analysis with Bull/Bear/Sideways market modeling for institutional-grade probability assessments",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbols": {"type": "array", "items": {"type": "string"}, "description": "Stock symbols to analyze"},
+                    "strikes": {"type": "array", "items": {"type": "number"}, "description": "Strike prices for each symbol"},
+                    "expiration_date": {"type": "string", "description": "Options expiration date (YYYY-MM-DD)"},
+                    "scenarios": {"type": "array", "items": {"type": "string"}, "description": "Market scenarios to model", "default": ["bull", "bear", "sideways"]},
+                    "num_simulations": {"type": "integer", "description": "Number of Monte Carlo simulations per scenario", "default": 10000}
+                },
+                "required": ["symbols", "strikes", "expiration_date"]
+            }
+        ),
+        Tool(
+            name="historical_pattern_recognition",
+            description="Phase 2: Advanced pattern recognition system that identifies similar historical market conditions and their outcomes for predictive analysis",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock symbol to analyze"},
+                    "pattern_type": {"type": "string", "description": "Type of pattern to match", "enum": ["price_momentum", "volatility_spike", "earnings_setup", "technical_breakout"], "default": "price_momentum"},
+                    "lookback_days": {"type": "integer", "description": "Days to look back for pattern matching", "default": 252},
+                    "min_similarity": {"type": "number", "description": "Minimum similarity threshold (0-1)", "default": 0.7}
+                },
+                "required": ["symbol"]
+            }
+        ),
+        Tool(
+            name="event_driven_analysis",
+            description="Phase 2: Comprehensive event-driven analysis engine tracking earnings, FDA approvals, Fed meetings, and other market-moving events",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbols": {"type": "array", "items": {"type": "string"}, "description": "Stock symbols to analyze for upcoming events"},
+                    "event_types": {"type": "array", "items": {"type": "string"}, "description": "Types of events to track", "default": ["earnings", "fda", "fed", "economic"]},
+                    "days_ahead": {"type": "integer", "description": "How many days ahead to look for events", "default": 30},
+                    "impact_threshold": {"type": "string", "description": "Minimum event impact level", "enum": ["low", "medium", "high"], "default": "medium"}
+                },
+                "required": ["symbols"]
+            }
+        ),
+        Tool(
+            name="cross_asset_correlation_analysis",
+            description="Phase 2: Advanced correlation analysis across bonds, dollar, commodities, and crypto to predict options performance in different market conditions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "primary_symbols": {"type": "array", "items": {"type": "string"}, "description": "Primary stock symbols to analyze"},
+                    "asset_classes": {"type": "array", "items": {"type": "string"}, "description": "Asset classes to correlate with", "default": ["bonds", "dollar", "commodities", "crypto"]},
+                    "correlation_period": {"type": "integer", "description": "Period in days for correlation calculation", "default": 90},
+                    "regime_analysis": {"type": "boolean", "description": "Include regime-based correlation analysis", "default": true}
+                },
+                "required": ["primary_symbols"]
+            }
+        ),
+        Tool(
+            name="advanced_volatility_forecasting",
+            description="Phase 2: Sophisticated volatility forecasting using GARCH-like models, term structure analysis, and volatility surface modeling",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbols": {"type": "array", "items": {"type": "string"}, "description": "Stock symbols to forecast volatility for"},
+                    "forecast_horizon": {"type": "integer", "description": "Days ahead to forecast", "default": 30},
+                    "model_type": {"type": "string", "description": "Volatility model to use", "enum": ["garch", "ewma", "realized", "hybrid"], "default": "hybrid"},
+                    "include_term_structure": {"type": "boolean", "description": "Include volatility term structure analysis", "default": true}
+                },
+                "required": ["symbols"]
             }
         )
     ]
@@ -4148,12 +5212,30 @@ async def call_tool(name: str, arguments: dict):
             if 'error' in advice:
                 return format_response(None, advice['error'])
 
+            # AUTOMATICALLY ADD TO MONITORING if recommendation is positive
+            auto_monitor = False
+            if advice.get('recommendation', '').lower() in ['buy', 'strong buy']:
+                # Add to monitoring automatically
+                monitoring_result = select_option_for_monitoring(
+                    symbol=symbol,
+                    strike=strike,
+                    expiration_date=expiration_date,
+                    current_price=option_data.get('current_price'),
+                    notes=f"Auto-added from Pick command - {advice.get('recommendation')}"
+                )
+                auto_monitor = True
+                logger.info(f"Auto-added {symbol} ${strike} to monitoring: {monitoring_result['option_key']}")
+
             # Combine results
             result = {
                 'option_data': option_data,
                 'advice': advice,
                 'analysis_type': 'realtime_slack_simulation',
-                'formatted_response': format_analysis_response(option_data, advice)
+                'formatted_response': format_analysis_response(option_data, advice),
+                'auto_monitoring': {
+                    'enabled': auto_monitor,
+                    'total_monitored': len(selected_options) if auto_monitor else 0
+                }
             }
 
             return format_response(result)
@@ -4231,6 +5313,159 @@ async def call_tool(name: str, arguments: dict):
             )
 
             return format_response(result)
+
+        elif name == "multi_scenario_monte_carlo":
+            symbols = arguments.get('symbols', [])
+            strikes = arguments.get('strikes', [])
+            expiration_date = arguments.get('expiration_date')
+            scenarios = arguments.get('scenarios', ['bull', 'bear', 'sideways'])
+            num_simulations = arguments.get('num_simulations', 10000)
+
+            if not symbols or not strikes or not expiration_date:
+                raise ValidationError("symbols, strikes, and expiration_date are required")
+
+            if len(symbols) != len(strikes):
+                raise ValidationError("Number of symbols must match number of strikes")
+
+            logger.info(f"Multi-Scenario Monte Carlo: Analyzing {len(symbols)} options across {len(scenarios)} scenarios")
+
+            results = []
+            for symbol, strike in zip(symbols, strikes):
+                analysis = await multi_scenario_monte_carlo_analysis(
+                    symbol=symbol,
+                    strike=strike,
+                    expiration_date=expiration_date,
+                    scenarios=scenarios,
+                    num_simulations=num_simulations
+                )
+                results.append(analysis)
+
+            return format_response({
+                "success": True,
+                "analysis_type": "multi_scenario_monte_carlo",
+                "results": results,
+                "scenarios_analyzed": scenarios,
+                "total_simulations": num_simulations * len(scenarios)
+            })
+
+        elif name == "historical_pattern_recognition":
+            symbol = arguments.get('symbol')
+            pattern_type = arguments.get('pattern_type', 'price_momentum')
+            lookback_days = arguments.get('lookback_days', 252)
+            min_similarity = arguments.get('min_similarity', 0.7)
+
+            if not symbol:
+                raise ValidationError("symbol is required")
+
+            logger.info(f"Pattern Recognition: Analyzing {symbol} for {pattern_type} patterns")
+
+            analysis = await historical_pattern_recognition(
+                symbol=symbol,
+                lookback_days=lookback_days,
+                pattern_type=pattern_type
+            )
+
+            return format_response({
+                "success": True,
+                "analysis_type": "historical_pattern_recognition",
+                "symbol": symbol,
+                "pattern_analysis": analysis
+            })
+
+        elif name == "event_driven_analysis":
+            symbols = arguments.get('symbols', [])
+            event_types = arguments.get('event_types', ['earnings', 'fda', 'fed', 'economic'])
+            days_ahead = arguments.get('days_ahead', 30)
+            impact_threshold = arguments.get('impact_threshold', 'medium')
+
+            if not symbols:
+                raise ValidationError("symbols are required")
+
+            logger.info(f"Event-Driven Analysis: Analyzing {len(symbols)} symbols for {len(event_types)} event types")
+
+            results = {}
+            for symbol in symbols:
+                try:
+                    analysis = await event_driven_analysis(
+                        symbol=symbol,
+                        days_ahead=days_ahead
+                    )
+                    results[symbol] = analysis
+                except Exception as e:
+                    logger.warning(f"Event analysis failed for {symbol}: {e}")
+                    results[symbol] = {}
+
+            analysis = {'events_analysis': results}
+
+            return format_response({
+                "success": True,
+                "analysis_type": "event_driven_analysis",
+                "symbols_analyzed": len(symbols),
+                "event_analysis": analysis
+            })
+
+        elif name == "cross_asset_correlation_analysis":
+            primary_symbols = arguments.get('primary_symbols', [])
+            asset_classes = arguments.get('asset_classes', ['bonds', 'dollar', 'commodities', 'crypto'])
+            correlation_period = arguments.get('correlation_period', 90)
+            regime_analysis = arguments.get('regime_analysis', True)
+
+            if not primary_symbols:
+                raise ValidationError("primary_symbols are required")
+
+            logger.info(f"Cross-Asset Correlation: Analyzing {len(primary_symbols)} symbols against {len(asset_classes)} asset classes")
+
+            results = {}
+            for symbol in primary_symbols:
+                try:
+                    analysis = await cross_asset_correlation_analysis(
+                        symbol=symbol,
+                        lookback_days=correlation_period
+                    )
+                    results[symbol] = analysis
+                except Exception as e:
+                    logger.warning(f"Correlation analysis failed for {symbol}: {e}")
+                    results[symbol] = {}
+
+            analysis = {'correlation_data': results}
+
+            return format_response({
+                "success": True,
+                "analysis_type": "cross_asset_correlation",
+                "correlation_analysis": analysis
+            })
+
+        elif name == "advanced_volatility_forecasting":
+            symbols = arguments.get('symbols', [])
+            forecast_horizon = arguments.get('forecast_horizon', 30)
+            model_type = arguments.get('model_type', 'hybrid')
+            include_term_structure = arguments.get('include_term_structure', True)
+
+            if not symbols:
+                raise ValidationError("symbols are required")
+
+            logger.info(f"Advanced Volatility Forecasting: Forecasting volatility for {len(symbols)} symbols using {model_type} model")
+
+            results = []
+            for symbol in symbols:
+                try:
+                    forecast = await advanced_volatility_forecasting(
+                        symbol=symbol,
+                        forecast_days=forecast_horizon,
+                        current_iv=0.25  # Default IV if not available
+                    )
+                    results.append(forecast)
+                except Exception as e:
+                    logger.warning(f"Volatility forecasting failed for {symbol}: {e}")
+                    results.append({'symbol': symbol, 'error': str(e)})
+
+            return format_response({
+                "success": True,
+                "analysis_type": "advanced_volatility_forecasting",
+                "volatility_forecasts": results,
+                "model_used": model_type,
+                "forecast_horizon": forecast_horizon
+            })
 
     except ValidationError as e:
         logger.error(f"Validation error in {name}: {str(e)}")

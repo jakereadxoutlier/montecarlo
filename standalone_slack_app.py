@@ -213,6 +213,7 @@ def setup_message_handlers(app):
                 analysis = result['data']
                 option_data = analysis['option_data']
                 advice = analysis['advice']
+                auto_monitoring = analysis.get('auto_monitoring', {})
 
                 # Format response
                 response = f"**{symbol} ${strike} Call Analysis**\n\n"
@@ -225,12 +226,22 @@ def setup_message_handlers(app):
                 response += f"**Recommendation: {advice['recommendation']}**\n"
                 response += f"Confidence: {advice['confidence']} ({advice['net_score']:+d} score)\n\n"
 
+                # Show monitoring status
+                if auto_monitoring.get('enabled'):
+                    response += f"✅ **AUTO-MONITORING ENABLED**\n"
+                    response += f"📊 Total positions monitored: {auto_monitoring.get('total_monitored', 0)}\n"
+                    response += f"🔔 You'll receive sell alerts when profit targets are hit!\n\n"
+
                 response += f"**Key Factors:**\n"
                 for factor in advice['factors'][:6]:
                     response += f"- {factor}\n"
 
                 if len(advice['factors']) > 6:
                     response += f"- ... and {len(advice['factors']) - 6} more factors\n"
+
+                # Add monitoring instructions for non-buy recommendations
+                if not auto_monitoring.get('enabled'):
+                    response += f"\n💡 **Tip:** Only BUY recommendations are auto-monitored for sell alerts."
 
                 await say(response)
             else:
@@ -247,34 +258,38 @@ def setup_message_handlers(app):
 
         # Help command
         if any(word in text for word in ['help', 'commands', 'usage']):
-            help_text = """**Monte Carlo Commands:**
+            help_text = """**🎯 StockFlow Bot - Institutional Grade Options Analysis**
 
-🎯 **Core Commands:**
-- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice for an option (auto-monitors for sell alerts)
+**📈 Core Commands:**
+- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice + auto-monitoring for sell alerts
 - `Analyze [SYMBOL] $[STRIKE]` - Same as Pick
 - `Buy [SYMBOL] $[STRIKE]` - Same as Pick
-- `Options for [MM/DD/YYYY]` - Find best options for a specific expiration date
 
-🧠 **Advanced Commands:**
-- `Smart Picks` - Find optimal risk/reward options ≤30 days (THE HACK!)
+**🧠 Advanced Commands:**
+- `Smart Picks` - Find optimal risk/reward options ≤30 days (INSTITUTIONAL GRADE!)
 
-⚙️ **Control Commands:**
-- `Cancel` or `Stop` - Stop monitoring
+**📊 Monitoring Commands:**
+- `Status` or `Positions` - Check monitored positions
+- `Stop` or `Cancel` - Stop all monitoring
+- `Start Monitoring` - Resume monitoring
+
+**🔧 System Commands:**
 - `Help` - Show this help message
 
-**Examples:**
-- `Pick TSLA $430` - Analyzes and starts monitoring
-- `Smart Picks` - Shows optimal high-probability, high-profit options
-- `Options for 10/24/2025` - Shows best options expiring that Friday
-- `Analyze AAPL $200`
+**📋 Examples:**
+- `Pick TSLA $430` - Analyzes TSLA $430 call + starts monitoring
+- `Smart Picks` - Shows top institutional-grade options
+- `Status` - Check all monitored positions
+- `Stop` - Stop monitoring all positions
 
-🚀 **Advanced Analysis Features:**
-- 7 Novel Analysis Techniques (Fractal Volatility, Gamma Squeeze, etc.)
-- ITM probability (20K Monte Carlo + Advanced Monte Carlo)
-- Greek analysis (Delta, Gamma, Theta, Vega)
-- Market sentiment and news analysis
-- Composite risk/reward scoring
-- Automatic sell alert notifications"""
+**⚡ NEW: Institutional Features (Phase 2):**
+- **Alpha Vantage Integration**: Real earnings calendar, market data
+- **FRED Economic Data**: Government bond yields, economic indicators
+- **5 Advanced Analytics**: Multi-scenario Monte Carlo, pattern recognition, volatility forecasting, event analysis, cross-asset correlation
+- **Auto-monitoring**: BUY recommendations automatically monitored
+- **Smart sell alerts**: Real-time profit target notifications
+
+**🎯 Perfect for $1K+ trading capital with professional-grade analysis!**"""
             await say(help_text)
 
         # Smart Picks (fallback)
@@ -285,9 +300,44 @@ def setup_message_handlers(app):
         elif re.match(r'^(pick|buy|analyze)\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', text):
             await handle_pick_command(message, say)
 
+        # Monitoring control commands
+        elif any(word in text for word in ['cancel', 'stop', 'stop monitoring']):
+            result = await call_mcp_tool('stop_continuous_monitoring', {})
+            if result and result.get('success'):
+                await say("🛑 **Monitoring Stopped**\n\nAll position monitoring has been stopped. You will no longer receive sell alerts.")
+            else:
+                await say("❌ Error stopping monitoring. Please try again.")
+
+        elif any(word in text for word in ['status', 'monitoring status', 'positions']):
+            result = await call_mcp_tool('list_selected_options', {})
+            if result and result.get('success'):
+                data = result['data']
+                if data.get('selected_options'):
+                    response = f"**📊 Monitoring Status**\n\n"
+                    response += f"**Active Positions:** {len(data['selected_options'])}\n"
+                    response += f"**Monitoring:** {'✅ Active' if data.get('monitoring_active') else '❌ Stopped'}\n\n"
+
+                    for opt_key, opt_data in data['selected_options'].items():
+                        response += f"• **{opt_data['symbol']} ${opt_data['strike']}** (Exp: {opt_data['expiration_date']})\n"
+                        response += f"  Added: {opt_data['selected_at'][:10]} | Alerts sent: {opt_data['alerts_sent']}\n"
+
+                    await say(response)
+                else:
+                    await say("📊 **No Active Positions**\n\nUse `Pick [SYMBOL] $[STRIKE]` to start monitoring an option.")
+            else:
+                await say("❌ Error getting monitoring status. Please try again.")
+
+        # Start monitoring command
+        elif any(word in text for word in ['start monitoring', 'resume monitoring']):
+            result = await call_mcp_tool('start_continuous_monitoring', {})
+            if result and result.get('success'):
+                await say("✅ **Monitoring Started**\n\nContinuous monitoring is now active. You'll receive sell alerts when profit targets are hit!")
+            else:
+                await say("❌ Error starting monitoring. Please try again.")
+
         # Default response
         else:
-            await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430`\n- `Smart Picks`\n- `Options for 10/24/2025`")
+            await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430`\n- `Smart Picks`\n- `Status` (check positions)\n- `Stop` (stop monitoring)")
 
 async def main():
     """Start the Slack App."""
