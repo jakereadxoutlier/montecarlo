@@ -62,8 +62,23 @@ async def root(request):
         "tokens_present": bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN) if slack_imports_ok else False
     })
 
+async def test_slack_app_start():
+    """Test starting Slack app - this is likely where it crashes"""
+    try:
+        logger.info("🚀 TESTING: Starting Slack Socket Mode app...")
+
+        # This is likely where the crash happens
+        if standalone_app_import_ok:
+            await run_slack_app()
+        else:
+            logger.error("Cannot start Slack app - import failed")
+
+    except Exception as e:
+        logger.error(f"💥 Slack app crashed: {e}")
+        # Don't let Slack crash kill the whole server
+
 async def main():
-    """Clean server - exact copy of working minimal pattern"""
+    """Clean server + test Slack app execution"""
     logger.info("🚀 Starting CLEAN server...")
 
     app = web.Application()
@@ -80,10 +95,17 @@ async def main():
 
     logger.info("✅ Clean server started successfully")
 
-    # Keep running forever
-    while True:
-        logger.info("🟢 Clean server still running...")
-        await asyncio.sleep(60)
+    # Test running Slack app in background
+    slack_task = asyncio.create_task(test_slack_app_start())
+
+    # Keep HTTP server running regardless of Slack
+    try:
+        while True:
+            logger.info("🟢 Clean server still running...")
+            await asyncio.sleep(60)
+    except KeyboardInterrupt:
+        logger.info("👋 Shutting down...")
+        slack_task.cancel()
 
 if __name__ == "__main__":
     try:
