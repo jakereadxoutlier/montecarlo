@@ -8,6 +8,10 @@ import os
 from datetime import datetime
 from aiohttp import web
 
+# Simple logging (no file logging) - FIRST!
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("clean-server")
+
 # Test 1: Add minimal Slack imports only
 try:
     from slack_bolt.async_app import AsyncApp
@@ -22,10 +26,6 @@ try:
 except Exception as e:
     slack_imports_ok = False
     logger.error(f"❌ Slack imports failed: {e}")
-
-# Simple logging (no file logging)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("clean-server")
 
 async def health(request):
     return web.json_response({
