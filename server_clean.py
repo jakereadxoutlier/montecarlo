@@ -12,7 +12,7 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("clean-server")
 
-# Test 1: Add minimal Slack imports only
+# Test 1: Slack imports (WORKING)
 try:
     from slack_bolt.async_app import AsyncApp
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -27,6 +27,16 @@ except Exception as e:
     slack_imports_ok = False
     logger.error(f"❌ Slack imports failed: {e}")
 
+# Test 2: Add MCP imports (SUSPECT)
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    mcp_imports_ok = True
+    logger.info("✅ MCP imports successful")
+except Exception as e:
+    mcp_imports_ok = False
+    logger.error(f"❌ MCP imports failed: {e}")
+
 async def health(request):
     return web.json_response({
         "status": "healthy",
@@ -38,6 +48,7 @@ async def root(request):
     return web.json_response({
         "message": "Clean server is running!",
         "slack_imports": slack_imports_ok,
+        "mcp_imports": mcp_imports_ok,
         "tokens_present": bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN) if slack_imports_ok else False
     })
 
