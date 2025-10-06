@@ -158,7 +158,8 @@ async def _handle_smart_picks_internal(message, say):
                 response += f"Please try again in a few minutes or when markets are open."
                 await say(response)
         else:
-            await say(f"❌ **Enhanced Smart Picks Analysis Failed**\n\nThere was an error running the institutional-grade analysis. Please try again later.\n\n*Note: Enhanced Smart Picks includes real-time sentiment, market regime detection, and options flow analysis.*")
+            error_msg = result.get('error', 'Unknown error') if result else 'Connection error'
+            await say(f"❌ **Enhanced Smart Picks Analysis Failed**\n\n**Error:** {error_msg}\n\n**Possible causes:**\n- Markets closed (weekends/holidays)\n- API rate limits or timeouts\n- Network connectivity issues\n\n**Try:**\n- Wait a few minutes and try again\n- Try during market hours (9:30 AM - 4:00 PM ET)\n- Use `Pick [SYMBOL] $[STRIKE]` for individual analysis\n\n*Note: Enhanced Smart Picks includes real-time sentiment, market regime detection, and options flow analysis.*")
 
     except Exception as e:
         logger.error(f"Error handling Smart Picks command: {e}")
@@ -179,7 +180,7 @@ def setup_message_handlers(app):
     async def handle_smartpicks_command(message, say):
         await _handle_smart_picks_internal(message, say)
 
-    @app.message(re.compile(r'^pick\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', re.IGNORECASE))
+    @app.message(re.compile(r'^(pick|analyze|buy)\s+[A-Z]{2,5}\s+\$?\d+(\.\d+)?', re.IGNORECASE))
     async def handle_pick_command(message, say):
         """Handle pick command with specific pattern."""
         try:
@@ -187,15 +188,15 @@ def setup_message_handlers(app):
             logger.info(f"Received pick command: {text}")
 
             # Parse pick command
-            pick_pattern = r'pick\s+([a-z]{1,5})\s+\$?(\d+(?:\.\d+)?)'
-            match = re.search(pick_pattern, text.lower())
+            pick_pattern = r'(pick|analyze|buy)\s+([A-Z]{2,5})\s+\$?(\d+(?:\.\d+)?)'
+            match = re.search(pick_pattern, text, re.IGNORECASE)
 
             if not match:
                 await say("Please use format: `Pick [SYMBOL] $[STRIKE]` (e.g., `Pick TSLA $430`)")
                 return
 
-            symbol = match.group(1).upper()
-            strike = float(match.group(2))
+            symbol = match.group(2).upper()
+            strike = float(match.group(3))
 
             await say(f"Analyzing {symbol} ${strike} call... Please wait.")
 
@@ -299,7 +300,7 @@ def setup_message_handlers(app):
             await _handle_smart_picks_internal(message, say)
 
         # Pick command (fallback for non-regex matches)
-        elif re.match(r'^(pick|buy|analyze)\s+[a-z]{1,5}\s+\$?\d+(\.\d+)?', text):
+        elif re.match(r'^(pick|buy|analyze)\s+[A-Z]{2,5}\s+\$?\d+(\.\d+)?', text, re.IGNORECASE):
             await handle_pick_command(message, say)
 
         # Monitoring control commands
