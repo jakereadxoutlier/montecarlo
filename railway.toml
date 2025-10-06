@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python3 server.py"
+startCommand = "python3 test_minimal.py"
 restartPolicyType = "always"
 
 [environments.production]
