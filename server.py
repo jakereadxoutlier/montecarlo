@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Production StockFlow Server - Always-on deployment ready
-Auto-restarts on crashes, includes health checks, and proper logging
+Production StockFlow Server - Railway compatible with HTTP + Socket Mode
 """
 import asyncio
 import logging
 import signal
 import sys
 import time
+import os
 from datetime import datetime
+from aiohttp import web
 from standalone_slack_app import main as run_slack_app
 
 # Configure production logging
@@ -22,80 +23,66 @@ logging.basicConfig(
 )
 logger = logging.getLogger("stockflow-production-server")
 
-class ProductionServer:
-    def __init__(self):
-        self.running = True
-        self.restart_count = 0
-        self.max_restarts = 10
-        self.last_restart = None
+async def create_http_server():
+    """Create HTTP server for Railway (same pattern as working minimal app)"""
+    async def health(request):
+        return web.json_response({
+            "status": "healthy",
+            "service": "StockFlow Bot",
+            "uptime": str(datetime.now())
+        })
 
-    async def health_check(self):
-        """Simple health check loop"""
-        while self.running:
-            try:
-                logger.info(f"🟢 StockFlow Server Health Check - Uptime: {datetime.now()}")
-                await asyncio.sleep(300)  # Health check every 5 minutes
-            except Exception as e:
-                logger.error(f"Health check failed: {e}")
-                await asyncio.sleep(60)
+    async def root(request):
+        return web.json_response({
+            "message": "StockFlow Bot is running!",
+            "service": "Options Trading Slack Bot",
+            "status": "active"
+        })
 
-    async def run_with_auto_restart(self):
-        """Run Slack app with automatic restart on failures"""
-        while self.running and self.restart_count < self.max_restarts:
-            try:
-                logger.info(f"🚀 Starting StockFlow Slack App (Attempt {self.restart_count + 1})")
+    app = web.Application()
+    app.router.add_get('/', root)
+    app.router.add_get('/health', health)
 
-                # Start health check in background
-                health_task = asyncio.create_task(self.health_check())
+    port = int(os.environ.get('PORT', 8080))
+    logger.info(f"🌐 Starting HTTP server on port {port}")
 
-                # Run the main Slack app
-                await run_slack_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
 
-            except KeyboardInterrupt:
-                logger.info("🛑 Received shutdown signal")
-                self.running = False
-                health_task.cancel()
-                break
+    logger.info("✅ HTTP server started successfully")
+    return runner
 
-            except Exception as e:
-                self.restart_count += 1
-                self.last_restart = datetime.now()
-
-                logger.error(f"💥 StockFlow crashed: {e}")
-                logger.info(f"🔄 Auto-restarting in 10 seconds... (Restart {self.restart_count}/{self.max_restarts})")
-
-                if health_task:
-                    health_task.cancel()
-
-                if self.restart_count < self.max_restarts:
-                    await asyncio.sleep(10)  # Wait before restart
-                else:
-                    logger.error(f"❌ Max restarts ({self.max_restarts}) reached. Shutting down.")
-                    self.running = False
-
-        logger.info("🔚 StockFlow Server shutdown complete")
-
-    def setup_signal_handlers(self):
-        """Setup graceful shutdown handlers"""
-        def signal_handler(signum, frame):
-            logger.info(f"📡 Received signal {signum}")
-            self.running = False
-
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
+async def run_slack_in_background():
+    """Run Slack app in background"""
+    try:
+        logger.info("🚀 Starting Slack Socket Mode app...")
+        await run_slack_app()
+    except Exception as e:
+        logger.error(f"Slack app error: {e}")
+        # Don't crash the whole server if Slack fails
 
 async def main():
-    """Production server main entry point"""
+    """Production server main - HTTP first, then Slack"""
     logger.info("🎯 StockFlow Production Server Starting...")
-    logger.info("📊 Features: Smart Picks, Advanced Analysis, 7 Novel Techniques")
-
-    server = ProductionServer()
-    server.setup_signal_handlers()
 
     try:
-        await server.run_with_auto_restart()
+        # Start HTTP server first (for Railway)
+        http_runner = await create_http_server()
+
+        # Start Slack app in background
+        slack_task = asyncio.create_task(run_slack_in_background())
+
+        # Keep running with periodic health checks
+        while True:
+            logger.info("🟢 StockFlow still running...")
+            await asyncio.sleep(300)  # Every 5 minutes
+
+    except KeyboardInterrupt:
+        logger.info("👋 Shutting down...")
     except Exception as e:
-        logger.error(f"💀 Production server fatal error: {e}")
+        logger.error(f"💥 Server error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
