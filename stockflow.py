@@ -166,6 +166,170 @@ async def fetch_fred_data(series_id: str, limit: int = 100) -> dict:
         logger.error(f"FRED API error: {e}")
         return {"observations": []}
 
+async def get_insider_trading_data(symbol: str) -> Dict[str, Any]:
+    """Get insider trading data - CRITICAL FOR PREDICTING MOVES."""
+    try:
+        # Use yfinance insider data since Alpha Vantage insider data requires higher tier
+        ticker = yf.Ticker(symbol)
+
+        # Get recent insider transactions
+        try:
+            insider_data = ticker.insider_transactions
+            if insider_data is not None and not insider_data.empty:
+                recent_trades = []
+
+                for index, trade in insider_data.head(10).iterrows():  # Last 10 trades
+                    trade_type = 'BUY' if 'Purchase' in str(trade.get('Transaction', '')) else 'SELL'
+
+                    recent_trades.append({
+                        'date': str(trade.get('Date', '')),
+                        'type': trade_type,
+                        'shares': int(trade.get('Shares', 0)) if pd.notna(trade.get('Shares')) else 0,
+                        'value': float(trade.get('Value', 0)) if pd.notna(trade.get('Value')) else 0,
+                        'insider_name': str(trade.get('Insider', '')),
+                        'title': str(trade.get('Title', ''))
+                    })
+
+                # Calculate insider sentiment
+                recent_buys = [t for t in recent_trades if t['type'] == 'BUY']
+                recent_sells = [t for t in recent_trades if t['type'] == 'SELL']
+
+                insider_sentiment = 0.0
+                if recent_buys or recent_sells:
+                    buy_value = sum(t['value'] for t in recent_buys)
+                    sell_value = sum(t['value'] for t in recent_sells)
+                    total_value = buy_value + sell_value
+
+                    if total_value > 0:
+                        insider_sentiment = (buy_value - sell_value) / total_value
+
+                return {
+                    'insider_trades': recent_trades,
+                    'insider_sentiment': insider_sentiment,
+                    'net_insider_activity': len(recent_buys) - len(recent_sells),
+                    'confidence': min(len(recent_trades) / 5, 1.0),
+                    'bullish_insider_activity': insider_sentiment > 0.2
+                }
+        except:
+            pass
+
+    except Exception as e:
+        logger.warning(f"Insider trading data unavailable for {symbol}: {e}")
+
+    return {
+        'insider_trades': [],
+        'insider_sentiment': 0.0,
+        'net_insider_activity': 0,
+        'confidence': 0.0,
+        'bullish_insider_activity': False
+    }
+
+async def get_options_gamma_squeeze_probability(symbol: str, current_price: float) -> Dict[str, Any]:
+    """Calculate gamma squeeze probability - CRITICAL FOR EXPLOSIVE MOVES."""
+    try:
+        ticker = yf.Ticker(symbol)
+
+        squeeze_indicators = {
+            'gamma_exposure': 0.0,
+            'call_wall': current_price,
+            'put_wall': current_price,
+            'squeeze_probability': 0.0,
+            'max_pain': current_price,
+            'high_gamma_risk': False
+        }
+
+        options_dates = ticker.options
+        if not options_dates:
+            return squeeze_indicators
+
+        # Analyze next expiration for gamma exposure
+        try:
+            options = ticker.option_chain(options_dates[0])
+            calls = options.calls
+            puts = options.puts
+
+            # Find strikes with highest open interest
+            call_oi_by_strike = {}
+            put_oi_by_strike = {}
+
+            for _, call in calls.iterrows():
+                strike = call['strike']
+                oi = call.get('openInterest', 0) or 0
+                if oi > 0 and abs(strike - current_price) / current_price < 0.10:  # Within 10%
+                    call_oi_by_strike[strike] = oi
+
+            for _, put in puts.iterrows():
+                strike = put['strike']
+                oi = put.get('openInterest', 0) or 0
+                if oi > 0 and abs(strike - current_price) / current_price < 0.10:  # Within 10%
+                    put_oi_by_strike[strike] = oi
+
+            # Find major walls
+            if call_oi_by_strike:
+                max_call_strike = max(call_oi_by_strike.keys(), key=lambda k: call_oi_by_strike[k])
+                squeeze_indicators['call_wall'] = max_call_strike
+                max_call_oi = call_oi_by_strike[max_call_strike]
+
+                # High gamma risk if major call wall above current price with high OI
+                if max_call_strike > current_price and max_call_oi > 10000:
+                    squeeze_indicators['high_gamma_risk'] = True
+                    squeeze_indicators['squeeze_probability'] = min(max_call_oi / 50000, 0.8)
+
+            if put_oi_by_strike:
+                max_put_strike = max(put_oi_by_strike.keys(), key=lambda k: put_oi_by_strike[k])
+                squeeze_indicators['put_wall'] = max_put_strike
+
+        except Exception as e:
+            logger.warning(f"Gamma analysis failed for {symbol}: {e}")
+
+        return squeeze_indicators
+
+    except Exception as e:
+        logger.error(f"Gamma squeeze calculation failed for {symbol}: {e}")
+        return {
+            'gamma_exposure': 0.0,
+            'call_wall': current_price,
+            'put_wall': current_price,
+            'squeeze_probability': 0.0,
+            'max_pain': current_price,
+            'high_gamma_risk': False
+        }
+
+async def get_short_interest_data(symbol: str) -> Dict[str, Any]:
+    """Get short interest - HIGH SHORT INTEREST = SQUEEZE POTENTIAL."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+
+        short_ratio = info.get('shortRatio', 0) or 0
+        short_percent_float = info.get('shortPercentOfFloat', 0) or 0
+        shares_short = info.get('sharesShort', 0) or 0
+
+        # Calculate squeeze potential
+        squeeze_potential = 0.0
+        if short_percent_float > 0.15:  # 15%+ short interest
+            squeeze_potential = min(short_percent_float * 3, 1.0)  # Max 100%
+
+        return {
+            'short_ratio': short_ratio,
+            'short_percent_float': short_percent_float * 100,  # Convert to percentage
+            'shares_short': shares_short,
+            'squeeze_potential': squeeze_potential,
+            'high_short_interest': short_percent_float > 0.15,  # 15%+ is high
+            'days_to_cover': short_ratio
+        }
+
+    except Exception as e:
+        logger.warning(f"Short interest data unavailable for {symbol}: {e}")
+        return {
+            'short_ratio': 0,
+            'short_percent_float': 0,
+            'shares_short': 0,
+            'squeeze_potential': 0.0,
+            'high_short_interest': False,
+            'days_to_cover': 0
+        }
+
 async def get_alpha_vantage_earnings_calendar() -> Dict[str, Any]:
     """Get earnings calendar from Alpha Vantage."""
     earnings_data = await fetch_alpha_vantage_data("EARNINGS_CALENDAR", horizon="3month")
@@ -630,9 +794,109 @@ async def fetch_x_trends(symbol: str) -> Dict[str, Any]:
             logger.warning(f"X API key not configured, using pattern-based analysis for {symbol}")
             return _get_pattern_based_trends(symbol)
 
-        # TODO: Implement full X API v2 integration
-        # For now, use enhanced pattern-based analysis with better logic
-        return _get_enhanced_pattern_trends(symbol)
+        # X API v2 Integration for Social Sentiment
+        import requests
+        import base64
+
+        # Get bearer token using OAuth 2.0 client credentials
+        auth_url = "https://api.twitter.com/oauth2/token"
+        credentials = base64.b64encode(f"{X_API_KEY}:{X_API_SECRET}".encode()).decode()
+
+        auth_headers = {
+            'Authorization': f'Basic {credentials}',
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        }
+
+        auth_data = {'grant_type': 'client_credentials'}
+
+        auth_response = requests.post(auth_url, headers=auth_headers, data=auth_data, timeout=10)
+
+        if auth_response.status_code != 200:
+            logger.warning(f"X API auth failed: {auth_response.status_code}")
+            return _get_enhanced_pattern_trends(symbol)
+
+        bearer_token = auth_response.json().get('access_token')
+
+        # Search recent tweets about the symbol
+        search_url = "https://api.twitter.com/2/tweets/search/recent"
+        headers = {
+            'Authorization': f'Bearer {bearer_token}',
+        }
+
+        params = {
+            'query': f'${symbol} OR {symbol} stock (options OR calls OR puts) -is:retweet lang:en',
+            'max_results': 50,
+            'tweet.fields': 'public_metrics,created_at',
+        }
+
+        try:
+            response = requests.get(search_url, headers=headers, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                tweets = data.get('data', [])
+
+                if not tweets:
+                    logger.warning(f"No tweets found for {symbol}")
+                    return _get_enhanced_pattern_trends(symbol)
+
+                # PROFIT-FOCUSED SOCIAL SENTIMENT ANALYSIS
+                total_engagement = 0
+                sentiment_score = 0
+
+                # Aggressive profit keywords - weighted for maximum profit detection
+                mega_bullish = ['moon', 'rocket', '🚀', 'squeeze', 'gamma', 'yolo', '10x', 'millionaire', 'lambos']
+                bullish = ['bull', 'buy', 'call', 'long', 'pump', 'diamond hands', 'hodl', 'breakout', 'bullish']
+                bearish = ['bear', 'sell', 'put', 'short', 'dump', 'crash', 'paper hands', 'dead', 'bearish']
+                mega_bearish = ['bankruptcy', 'zero', 'worthless', 'scam', 'fraud', 'collapse', 'rekt']
+
+                for tweet in tweets:
+                    text = tweet.get('text', '').lower()
+                    metrics = tweet.get('public_metrics', {})
+
+                    # Weight by engagement (likes + retweets + replies for viral potential)
+                    engagement = (metrics.get('like_count', 0) +
+                                metrics.get('retweet_count', 0) * 3 +
+                                metrics.get('reply_count', 0))
+                    total_engagement += engagement
+
+                    # Calculate weighted sentiment for PROFIT MAXIMIZATION
+                    mega_bull_score = sum(3 for word in mega_bullish if word in text)  # 3x weight
+                    bull_score = sum(1 for word in bullish if word in text)
+                    bear_score = sum(1 for word in bearish if word in text)
+                    mega_bear_score = sum(3 for word in mega_bearish if word in text)  # 3x weight
+
+                    net_sentiment = (mega_bull_score + bull_score) - (bear_score + mega_bear_score)
+                    sentiment_score += net_sentiment * max(engagement, 1)  # Weight by engagement
+
+                # Normalize sentiment with profit-focused scaling
+                if total_engagement > 0:
+                    normalized_sentiment = sentiment_score / (total_engagement + len(tweets))
+                    normalized_sentiment = max(-1.0, min(1.0, normalized_sentiment))
+                else:
+                    normalized_sentiment = 0.0
+
+                # High engagement = higher confidence in signal for profit potential
+                confidence = min(total_engagement / 1000, 1.0)
+
+                return {
+                    'trend_score': normalized_sentiment,
+                    'mentions': len(tweets),
+                    'total_engagement': total_engagement,
+                    'confidence': confidence,
+                    'source': 'x_api_v2_profit_optimized'
+                }
+
+            elif response.status_code == 429:
+                logger.warning(f"X API rate limit hit for {symbol}")
+                return _get_enhanced_pattern_trends(symbol)
+            else:
+                logger.warning(f"X API error {response.status_code}: {response.text[:100]}")
+                return _get_enhanced_pattern_trends(symbol)
+
+        except Exception as api_error:
+            logger.warning(f"X API request failed: {api_error}")
+            return _get_enhanced_pattern_trends(symbol)
 
     except Exception as e:
         logger.warning(f"Failed to fetch X trends for {symbol}: {str(e)}")
@@ -2121,6 +2385,11 @@ async def monitor_selected_options():
             # STEP 4: Update each selected option with current data
             for option_key, option_data in selected_options.items():
                 try:
+                    # Skip sold options - no more monitoring needed
+                    if option_data.get('status') == 'sold':
+                        logger.debug(f"Skipping sold option: {option_key}")
+                        continue
+
                     symbol = option_data['symbol']
                     strike = option_data['strike']
                     expiration_date = option_data['expiration_date']
@@ -2278,6 +2547,11 @@ async def check_intelligent_sell_signals(option_key: str, option_data: Dict[str,
         current_price: Current stock price
     """
     try:
+        # Skip sell signal analysis for sold options
+        if option_data.get('status') == 'sold':
+            logger.debug(f"Skipping sell signals for sold option: {option_key}")
+            return
+
         symbol = option_data['symbol']
         strike = option_data['strike']
         current_itm_prob = option_data.get('current_itm_probability', 0)
@@ -2366,13 +2640,37 @@ async def check_intelligent_sell_signals(option_key: str, option_data: Dict[str,
                 # Send sell alert if it's been more than 1 hour since last sell alert
                 if not last_sell_alert or (current_time - datetime.datetime.fromisoformat(last_sell_alert)).total_seconds() > 3600:
 
-                    sell_alert_message = f"SELL RECOMMENDATION: {symbol} ${strike} Call\n"
-                    sell_alert_message += f"Recommendation: {recommendation}\n"
-                    sell_alert_message += f"Signal Strength: {signal_strength}/10\n"
-                    sell_alert_message += "Factors:\n" + "\n".join([f"- {signal}" for signal in sell_signals])
+                    sell_alert_message = f"🚨 SELL RECOMMENDATION: {symbol} ${strike} Call\n"
+                    sell_alert_message += f"📊 Recommendation: {recommendation}\n"
+                    sell_alert_message += f"🎯 Signal Strength: {signal_strength}/10\n"
+                    sell_alert_message += f"💰 Current Price: ${option_data.get('current_price', 'N/A')}\n"
+                    sell_alert_message += f"📈 Profit/Loss: {option_data.get('profit_loss_percent', 'N/A')}\n"
+                    sell_alert_message += "🔍 Factors:\n" + "\n".join([f"• {signal}" for signal in sell_signals])
 
-                    option_data['last_sell_alert'] = current_time.isoformat()
-                    option_data['sell_alerts_sent'] = option_data.get('sell_alerts_sent', 0) + 1
+                    # SEND TO SLACK IMMEDIATELY
+                    try:
+                        import requests
+                        webhook_url = os.getenv('SLACK_WEBHOOK_URL')
+                        if webhook_url:
+                            slack_payload = {
+                                "text": sell_alert_message,
+                                "username": "StockFlow Sell Alert",
+                                "icon_emoji": ":money_with_wings:"
+                            }
+
+                            response = requests.post(webhook_url, json=slack_payload, timeout=10)
+
+                            if response.status_code == 200:
+                                logger.info(f"✅ SELL ALERT SENT TO SLACK: {symbol} ${strike}")
+                                option_data['last_sell_alert'] = current_time.isoformat()
+                                option_data['sell_alerts_sent'] = option_data.get('sell_alerts_sent', 0) + 1
+                            else:
+                                logger.error(f"❌ Slack notification failed: {response.status_code}")
+                        else:
+                            logger.error("❌ SLACK_WEBHOOK_URL not configured - sell alert not sent!")
+
+                    except Exception as slack_error:
+                        logger.error(f"❌ Failed to send sell alert to Slack: {slack_error}")
 
                     logger.info(f"Intelligent sell alert for {option_key}: {recommendation} (strength: {signal_strength})")
 
@@ -3846,6 +4144,15 @@ async def find_optimal_risk_reward_options_enhanced(
                                 days_ahead=days_to_exp
                             )
 
+                            # PROFIT MAXIMIZATION: Insider Trading Analysis
+                            insider_data = await get_insider_trading_data(symbol)
+
+                            # PROFIT MAXIMIZATION: Gamma Squeeze Analysis
+                            gamma_data = await get_options_gamma_squeeze_probability(symbol, current_price)
+
+                            # PROFIT MAXIMIZATION: Short Interest Analysis
+                            short_data = await get_short_interest_data(symbol)
+
                             # Combine Phase 1 and Phase 2 ITM probabilities
                             base_itm_prob = advanced_result.get('final_analysis', {}).get('final_itm_probability', 0.5)
 
@@ -3880,14 +4187,27 @@ async def find_optimal_risk_reward_options_enhanced(
                             correlation_direction = symbol_correlation.get('favorable_correlation_direction', 0.5)
                             correlation_adjustment = (correlation_strength * correlation_direction - 0.25) * 0.06  # ±3% max
 
-                            # Enhanced ITM probability combining all Phase 2 analytics
+                            # PROFIT MAXIMIZATION ADJUSTMENTS
+                            # Insider trading boost - INSIDERS KNOW!
+                            insider_adjustment = insider_data.get('insider_sentiment', 0) * 0.15  # ±15% max for insider activity
+
+                            # Gamma squeeze boost - EXPLOSIVE MOVES!
+                            gamma_boost = gamma_data.get('squeeze_probability', 0) * 0.20  # ±20% max for gamma squeeze
+
+                            # Short squeeze boost - MASSIVE UPSIDE!
+                            short_squeeze_boost = short_data.get('squeeze_potential', 0) * 0.12  # ±12% max for short squeeze
+
+                            # ENHANCED ITM probability with PROFIT MAXIMIZATION
                             institutional_itm_prob = (
-                                base_itm_prob * 0.25 +          # Phase 1 base (25%)
-                                phase2_mc_prob * 0.3 +          # Phase 2 Monte Carlo (30%)
-                                (base_itm_prob + pattern_adjustment) * 0.15 +  # Pattern recognition (15%)
-                                (base_itm_prob + vol_adjustment) * 0.1 +       # Volatility forecasting (10%)
-                                (base_itm_prob + event_adjustment) * 0.1 +     # Event-driven analysis (10%)
-                                (base_itm_prob + correlation_adjustment) * 0.1  # Cross-asset correlation (10%)
+                                base_itm_prob * 0.20 +          # Phase 1 base (20%)
+                                phase2_mc_prob * 0.25 +         # Phase 2 Monte Carlo (25%)
+                                (base_itm_prob + pattern_adjustment) * 0.12 +  # Pattern recognition (12%)
+                                (base_itm_prob + vol_adjustment) * 0.08 +      # Volatility forecasting (8%)
+                                (base_itm_prob + event_adjustment) * 0.08 +    # Event-driven analysis (8%)
+                                (base_itm_prob + correlation_adjustment) * 0.07 +  # Cross-asset correlation (7%)
+                                (base_itm_prob + insider_adjustment) * 0.10 +   # INSIDER TRADING (10%)
+                                (base_itm_prob + gamma_boost) * 0.07 +          # GAMMA SQUEEZE (7%)
+                                (base_itm_prob + short_squeeze_boost) * 0.03    # SHORT SQUEEZE (3%)
                             )
 
                             # Apply Phase 1 sentiment boost on top of Phase 2 analysis
@@ -3929,11 +4249,22 @@ async def find_optimal_risk_reward_options_enhanced(
                             correlation_favorability = symbol_correlation.get('overall_correlation_score', 0.5)
                             correlation_multiplier = 1.0 + (correlation_favorability - 0.5) * 0.08  # ±4% max for correlation
 
-                            # Apply all multipliers: Phase 1 + Phase 2
+                            # PROFIT MAXIMIZATION MULTIPLIERS
+                            # Insider activity multiplier - FOLLOW THE SMART MONEY
+                            insider_confidence = insider_data.get('confidence', 0)
+                            insider_multiplier = 1.0 + (insider_data.get('insider_sentiment', 0) * insider_confidence * 0.25)  # ±25% max
+
+                            # Gamma squeeze multiplier - EXPLOSIVE POTENTIAL
+                            gamma_multiplier = 1.0 + (gamma_data.get('squeeze_probability', 0) * 0.30)  # ±30% max for gamma
+
+                            # Short squeeze multiplier - MASSIVE UPSIDE POTENTIAL
+                            short_multiplier = 1.0 + (short_data.get('squeeze_potential', 0) * 0.20)  # ±20% max for short squeeze
+
+                            # Apply all multipliers: Phase 1 + Phase 2 + PROFIT MAXIMIZATION
                             sentiment_multiplier = 1.0 + (symbol_sentiment.get('composite_sentiment', 0) * 0.1)
                             flow_multiplier = 1.0 + (symbol_flow.get('unusual_activity_score', 0) * 0.05)
 
-                            # Institutional-grade enhanced score with complete Phase 2 analytics
+                            # AGGRESSIVE PROFIT-FOCUSED SCORING
                             institutional_score = (base_score *
                                                   sentiment_multiplier *
                                                   flow_multiplier *
@@ -3941,7 +4272,10 @@ async def find_optimal_risk_reward_options_enhanced(
                                                   pattern_multiplier *
                                                   volatility_multiplier *
                                                   event_multiplier *
-                                                  correlation_multiplier)
+                                                  correlation_multiplier *
+                                                  insider_multiplier *      # INSIDER EDGE
+                                                  gamma_multiplier *        # GAMMA SQUEEZE
+                                                  short_multiplier)         # SHORT SQUEEZE
 
                             greeks = calculate_black_scholes_greeks(
                                 current_price, strike, time_to_expiration, iv, 0.05, 'call'
@@ -3974,6 +4308,9 @@ async def find_optimal_risk_reward_options_enhanced(
                                 'volatility_multiplier': volatility_multiplier,
                                 'event_multiplier': event_multiplier,
                                 'correlation_multiplier': correlation_multiplier,
+                                'insider_multiplier': insider_multiplier,
+                                'gamma_multiplier': gamma_multiplier,
+                                'short_multiplier': short_multiplier,
                                 'delta': greeks['delta'],
                                 'gamma': greeks['gamma'],
                                 'theta': greeks['theta'],
@@ -4008,6 +4345,26 @@ async def find_optimal_risk_reward_options_enhanced(
                                     'asset_class_correlations': symbol_correlation.get('asset_correlations', {}),
                                     'regime_correlations': symbol_correlation.get('regime_analysis', {}),
                                     'correlation_stability': symbol_correlation.get('correlation_stability', 0.5)
+                                },
+                                # PROFIT MAXIMIZATION DATA
+                                'insider_trading': {
+                                    'insider_sentiment': insider_data.get('insider_sentiment', 0),
+                                    'net_activity': insider_data.get('net_insider_activity', 0),
+                                    'confidence': insider_data.get('confidence', 0),
+                                    'bullish_activity': insider_data.get('bullish_insider_activity', False),
+                                    'recent_trades': len(insider_data.get('insider_trades', []))
+                                },
+                                'gamma_squeeze': {
+                                    'squeeze_probability': gamma_data.get('squeeze_probability', 0),
+                                    'call_wall': gamma_data.get('call_wall', current_price),
+                                    'put_wall': gamma_data.get('put_wall', current_price),
+                                    'high_gamma_risk': gamma_data.get('high_gamma_risk', False)
+                                },
+                                'short_squeeze': {
+                                    'short_percent_float': short_data.get('short_percent_float', 0),
+                                    'squeeze_potential': short_data.get('squeeze_potential', 0),
+                                    'days_to_cover': short_data.get('days_to_cover', 0),
+                                    'high_short_interest': short_data.get('high_short_interest', False)
                                 },
                                 **advanced_result.get('analysis_techniques', {})
                             })
@@ -4211,7 +4568,7 @@ def select_option_for_monitoring(symbol: str, strike: float, expiration_date: st
         logger.info("Auto-starting continuous monitoring - first option added")
         try:
             monitoring_active = True
-            monitoring_task = asyncio.create_task(continuous_monitoring_loop())
+            monitoring_task = asyncio.create_task(monitor_selected_options())
             logger.info("Continuous monitoring started successfully")
         except Exception as e:
             logger.error(f"Failed to auto-start monitoring: {e}")
@@ -4262,7 +4619,10 @@ def list_selected_options() -> Dict[str, Any]:
     return {
         'total_selected': len(selected_options),
         'options': sorted(options_list, key=lambda x: x['days_to_expiry']),
-        'monitoring_status': 'active' if monitoring_active else 'ready'
+        'monitoring_status': 'active' if monitoring_active else 'ready',
+        # SLACK COMPATIBILITY FIELDS
+        'selected_options': selected_options,  # Raw dict for Slack app
+        'monitoring_active': monitoring_active  # Boolean for Slack app
     }
 
 def remove_selected_option(option_key: str = None, symbol: str = None,
@@ -4300,6 +4660,87 @@ def remove_selected_option(option_key: str = None, symbol: str = None,
             'error': f'Option {key} not found in selected options',
             'available_options': list(selected_options.keys())
         }
+
+def mark_option_sold(symbol: str, strike: float, expiration_date: str = None,
+                     sold_price: float = None, notes: str = None) -> Dict[str, Any]:
+    """
+    Mark an option as sold to stop monitoring and sell alerts.
+
+    Args:
+        symbol: Stock ticker symbol
+        strike: Strike price
+        expiration_date: Expiration date (optional - will find any matching)
+        sold_price: Price option was sold at (optional)
+        notes: Additional notes about the sale
+
+    Returns:
+        Dictionary with sale confirmation details
+    """
+    global selected_options
+
+    symbol = symbol.upper()
+
+    # Find matching option(s)
+    matching_keys = []
+    if expiration_date:
+        # Exact match
+        option_key = f"{symbol}_{strike}_{expiration_date}"
+        if option_key in selected_options:
+            matching_keys.append(option_key)
+    else:
+        # Find any option with matching symbol and strike
+        for key in selected_options:
+            parts = key.split('_')
+            if len(parts) >= 3 and parts[0] == symbol and float(parts[1]) == strike:
+                matching_keys.append(key)
+
+    if not matching_keys:
+        return {
+            'marked_sold': False,
+            'error': f'No monitored option found for {symbol} ${strike}',
+            'available_options': list(selected_options.keys())
+        }
+
+    sold_options = []
+    for option_key in matching_keys:
+        option_data = selected_options[option_key]
+
+        # Calculate P&L if possible
+        original_price = option_data.get('current_price', 0)
+        final_pnl = None
+        if sold_price and original_price:
+            pnl_amount = sold_price - original_price
+            pnl_percent = (pnl_amount / original_price) * 100 if original_price > 0 else 0
+            final_pnl = f"${pnl_amount:+.2f} ({pnl_percent:+.1f}%)"
+
+        # Update option status
+        selected_options[option_key].update({
+            'status': 'sold',
+            'sold_at': datetime.datetime.now().isoformat(),
+            'sold_price': sold_price,
+            'final_pnl': final_pnl,
+            'sale_notes': notes or f"Manually marked as sold at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        })
+
+        sold_options.append({
+            'option_key': option_key,
+            'symbol': option_data['symbol'],
+            'strike': option_data['strike'],
+            'expiration_date': option_data['expiration_date'],
+            'sold_price': sold_price,
+            'final_pnl': final_pnl,
+            'alerts_sent_before_sale': option_data.get('alerts_sent', 0)
+        })
+
+        logger.info(f"Marked option as sold: {option_key} - P&L: {final_pnl or 'Not calculated'}")
+
+    return {
+        'marked_sold': True,
+        'sold_options': sold_options,
+        'total_marked': len(sold_options),
+        'final_pnl': sold_options[0]['final_pnl'] if sold_options else None,
+        'message': f"✅ Stopped sell alerts for {len(sold_options)} option(s)"
+    }
 
 def format_response(data: Any, error: Optional[str] = None) -> List[TextContent]:
     response = {
@@ -4645,6 +5086,21 @@ async def list_tools():
                     "regime_analysis": {"type": "boolean", "description": "Include regime-based correlation analysis", "default": true}
                 },
                 "required": ["primary_symbols"]
+            }
+        ),
+        Tool(
+            name="mark_option_sold",
+            description="Mark an option as sold to stop monitoring and sell alerts",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock ticker symbol"},
+                    "strike": {"type": "number", "description": "Strike price"},
+                    "expiration_date": {"type": "string", "description": "Expiration date (YYYY-MM-DD) - optional, will find matching options"},
+                    "sold_price": {"type": "number", "description": "Price option was sold at (optional)"},
+                    "notes": {"type": "string", "description": "Additional notes about the sale"}
+                },
+                "required": ["symbol", "strike"]
             }
         ),
         Tool(
@@ -5154,6 +5610,16 @@ async def call_tool(name: str, arguments: dict):
                 symbol = symbol.strip().upper()
 
             result = remove_selected_option(option_key, symbol, strike, expiration_date)
+            return format_response(result)
+
+        elif name == "mark_option_sold":
+            symbol = arguments['symbol'].strip().upper()
+            strike = float(arguments['strike'])
+            expiration_date = arguments.get('expiration_date')
+            sold_price = arguments.get('sold_price')
+            notes = arguments.get('notes')
+
+            result = mark_option_sold(symbol, strike, expiration_date, sold_price, notes)
             return format_response(result)
 
         elif name == "start_continuous_monitoring":

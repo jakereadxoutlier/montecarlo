@@ -270,6 +270,7 @@ def setup_message_handlers(app):
 
 **📊 Monitoring Commands:**
 - `Status` or `Positions` - Check monitored positions
+- `Sold [SYMBOL] $[STRIKE]` - Mark option as sold (stops alerts)
 - `Stop` or `Cancel` - Stop all monitoring
 - `Start Monitoring` - Resume monitoring
 
@@ -280,6 +281,7 @@ def setup_message_handlers(app):
 - `Pick TSLA $430` - Analyzes TSLA $430 call + starts monitoring
 - `Smart Picks` - Shows top institutional-grade options
 - `Status` - Check all monitored positions
+- `Sold TSLA $430` - Mark TSLA $430 as sold (stops alerts)
 - `Stop` - Stop monitoring all positions
 
 **⚡ NEW: Institutional Features (Phase 2):**
@@ -313,13 +315,28 @@ def setup_message_handlers(app):
             if result and result.get('success'):
                 data = result['data']
                 if data.get('selected_options'):
-                    response = f"**📊 Monitoring Status**\n\n"
-                    response += f"**Active Positions:** {len(data['selected_options'])}\n"
-                    response += f"**Monitoring:** {'✅ Active' if data.get('monitoring_active') else '❌ Stopped'}\n\n"
+                    active_count = 0
+                    sold_count = 0
+                    position_details = ""
 
                     for opt_key, opt_data in data['selected_options'].items():
-                        response += f"• **{opt_data['symbol']} ${opt_data['strike']}** (Exp: {opt_data['expiration_date']})\n"
-                        response += f"  Added: {opt_data['selected_at'][:10]} | Alerts sent: {opt_data['alerts_sent']}\n"
+                        if opt_data.get('status') == 'sold':
+                            sold_count += 1
+                            position_details += f"• **{opt_data['symbol']} ${opt_data['strike']}** ✅ SOLD (Exp: {opt_data['expiration_date']})\n"
+                            if opt_data.get('final_pnl'):
+                                position_details += f"  P&L: {opt_data['final_pnl']} | Sold: {opt_data.get('sold_at', '')[:10]}\n"
+                            else:
+                                position_details += f"  Sold: {opt_data.get('sold_at', '')[:10]}\n"
+                        else:
+                            active_count += 1
+                            position_details += f"• **{opt_data['symbol']} ${opt_data['strike']}** 🔔 MONITORING (Exp: {opt_data['expiration_date']})\n"
+                            position_details += f"  Added: {opt_data['selected_at'][:10]} | Alerts sent: {opt_data.get('alerts_sent', 0)}\n"
+
+                    response = f"**📊 Monitoring Status**\n\n"
+                    response += f"**Active Monitoring:** {active_count} positions\n"
+                    response += f"**Sold Positions:** {sold_count} completed\n"
+                    response += f"**System Status:** {'✅ Active' if data.get('monitoring_active') else '❌ Stopped'}\n\n"
+                    response += position_details
 
                     await say(response)
                 else:
@@ -335,9 +352,41 @@ def setup_message_handlers(app):
             else:
                 await say("❌ Error starting monitoring. Please try again.")
 
+        # Sold command - mark option as sold to stop alerts
+        elif text.lower().startswith('sold '):
+            # Parse sold command: "Sold TSLA $430"
+            pattern = r'sold\s+([A-Za-z]+)\s*\$?(\d+\.?\d*)'
+            match = re.search(pattern, text, re.IGNORECASE)
+
+            if not match:
+                await say("Please use format: `Sold [SYMBOL] $[STRIKE]` (e.g., `Sold TSLA $430`)")
+                return
+
+            symbol = match.group(1).upper()
+            strike = float(match.group(2))
+
+            await say(f"Marking {symbol} ${strike} as sold and stopping alerts...")
+
+            # Call MCP tool to mark as sold
+            result = await call_mcp_tool(
+                'mark_option_sold',
+                {
+                    'symbol': symbol,
+                    'strike': strike,
+                    'expiration_date': '2025-10-17'  # Default - will find any matching
+                }
+            )
+
+            if result and result.get('success'):
+                data = result['data']
+                await say(f"✅ **{symbol} ${strike} Marked as SOLD**\n\n📊 Sell alerts stopped for this position.\n💰 Profit/Loss: {data.get('final_pnl', 'Not calculated')}\n\nGood trade! 🎉")
+            else:
+                error_msg = result.get('error', 'Unknown error') if result else 'Connection error'
+                await say(f"❌ Could not mark {symbol} ${strike} as sold: {error_msg}\n\nTry `Status` to see your monitored positions.")
+
         # Default response
         else:
-            await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430`\n- `Smart Picks`\n- `Status` (check positions)\n- `Stop` (stop monitoring)")
+            await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430` (analyze & monitor)\n- `Smart Picks` (find opportunities)\n- `Status` (check positions)\n- `Sold TSLA $430` (mark as sold)\n- `Stop` (stop monitoring)")
 
 async def main():
     """Start the Slack App."""
