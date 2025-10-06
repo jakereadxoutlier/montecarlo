@@ -58,15 +58,16 @@ async def _handle_smart_picks_internal(message, say):
 
         await say(f"🧠 **Smart Picks Analysis Starting...**\n🔍 Finding optimal risk/reward options ≤30 days using advanced techniques...\n⏳ This may take 30-60 seconds to analyze all Fortune 500 options.")
 
-        # Call MCP tool for Smart Picks analysis
+        # Call ENHANCED MCP tool for Smart Picks analysis
         result = await call_mcp_tool(
-            'smart_picks_optimal_options',
+            'smart_picks_optimal_options_enhanced',
             {
                 'max_days_to_expiry': 30,
-                'min_profit_potential': 0.15,  # 15% minimum profit potential
-                'min_probability': 0.45,       # 45% minimum ITM probability
-                'max_risk_level': 6,           # Medium risk tolerance
-                'max_results': 8               # Top 8 picks
+                'target_profit_potential': 0.15,  # 15% target profit potential (adaptive)
+                'target_probability': 0.45,       # 45% target ITM probability (adaptive)
+                'target_risk_level': 6,           # Medium risk tolerance (adaptive)
+                'max_results': 8,                 # Top 8 picks
+                'always_show_results': True       # Always show best available options
             }
         )
 
@@ -76,43 +77,88 @@ async def _handle_smart_picks_internal(message, say):
             summary = analysis['summary_stats']
 
             if optimal_options:
-                response = f"**🎯 Smart Picks - Optimal Risk/Reward Balance**\n\n"
-                response += f"**📊 Analysis Summary:**\n"
-                response += f"- Options Analyzed: {analysis['total_options_found']:,}\n"
-                response += f"- Avg ITM Probability: {summary['average_itm_probability']:.1%}\n"
-                response += f"- Avg Profit Potential: {summary['average_profit_potential']:.1%}\n"
-                response += f"- Avg Risk Level: {summary['average_risk_level']:.1f}/10\n"
-                response += f"- Avg Days to Expiry: {summary['average_days_to_expiration']:.0f}\n\n"
+                market_context = analysis.get('market_context', {})
 
-                response += f"**🏆 Top {len(optimal_options)} Optimal Options:**\n"
+                response = f"**🎯 ENHANCED Smart Picks - Institutional Grade Analysis**\n\n"
+
+                # Market Context
+                response += f"**📈 Market Context:**\n"
+                response += f"- Regime: **{market_context.get('regime', 'Unknown').title()}** "
+                response += f"({market_context.get('regime_confidence', 0):.0%} confidence)\n"
+                response += f"- {market_context.get('message', 'Analysis complete')}\n\n"
+
+                # Enhanced Analysis Summary
+                response += f"**🔬 Institutional Analysis Summary:**\n"
+                response += f"- Options Analyzed: **{analysis['total_options_analyzed']:,}**\n"
+                response += f"- Ideal Criteria Met: **{analysis.get('ideal_criteria_met', 0)}** options\n"
+                response += f"- Sentiment Analyzed: **{market_context.get('sentiment_analyzed_symbols', 0)}** symbols\n"
+                response += f"- Options Flow Analyzed: **{market_context.get('flow_analyzed_symbols', 0)}** symbols\n"
+                response += f"- Processing Time: **{analysis.get('performance_metrics', {}).get('processing_time_seconds', 0):.1f}s**\n\n"
+
+                # Results Summary
+                response += f"**📊 Results Summary:**\n"
+                response += f"- Avg ITM Probability: **{summary['average_itm_probability']:.1%}**\n"
+                response += f"- Avg Profit Potential: **{summary['average_profit_potential']:.1%}**\n"
+                response += f"- Avg Risk Level: **{summary['average_risk_level']:.1f}/10**\n"
+                response += f"- Avg Days to Expiry: **{summary['average_days_to_expiration']:.0f}**\n\n"
+
+                response += f"**🏆 Top {len(optimal_options)} Options Found:**\n"
 
                 for i, opt in enumerate(optimal_options[:6], 1):  # Show top 6
-                    response += f"\n{i}. **{opt['symbol']} ${opt['strike']} Call** (Exp: {opt['expiration']})\n"
-                    response += f"   • Composite Score: **{opt['composite_score']:.4f}** (Higher = Better)\n"
-                    response += f"   • ITM Probability: **{opt['itm_probability']:.1%}**\n"
-                    response += f"   • Profit Potential: **{opt['profit_potential']:.1%}**\n"
-                    response += f"   • Risk Level: **{opt['risk_level']:.1f}/10**\n"
-                    response += f"   • Days to Expiry: **{opt['days_to_expiration']}**\n"
-                    response += f"   • Option Price: **${opt['option_price']:.2f}**\n"
-                    response += f"   • Volume: **{opt['volume']:,}**\n"
+                    category = opt.get('category', 'acceptable')
+                    category_emoji = "🎯" if category == "ideal" else "📈" if category == "adapted" else "⚖️"
+
+                    response += f"\n{i}. **{opt['symbol']} ${opt['strike']} Call** {category_emoji} (Exp: {opt['expiration']})\n"
+                    response += f"   • **Enhanced Score: {opt['composite_score']:.4f}** (Higher = Better)\n"
+                    response += f"   • **ITM Probability: {opt['itm_probability']:.1%}**"
+
+                    # Show sentiment adjustment if significant
+                    sentiment_adj = opt.get('sentiment_adjustment', 0)
+                    if abs(sentiment_adj) >= 0.01:
+                        response += f" (Sentiment +{sentiment_adj:+.1%})"
+                    response += "\n"
+
+                    response += f"   • **Profit Potential: {opt['profit_potential']:.1%}**\n"
+                    response += f"   • **Risk Level: {opt['risk_level']:.1f}/10**\n"
+                    response += f"   • **Days to Expiry: {opt['days_to_expiration']}**\n"
+                    response += f"   • **Option Price: ${opt['option_price']:.2f}**\n"
+                    response += f"   • **Volume: {opt['volume']:,}**"
+
+                    # Show flow sentiment if available
+                    flow_data = opt.get('flow_data', {})
+                    if flow_data and 'flow_sentiment' in flow_data:
+                        flow_sentiment = flow_data['flow_sentiment']
+                        if flow_sentiment != 'neutral':
+                            flow_emoji = "🟢" if flow_sentiment == 'bullish' else "🔴"
+                            response += f" | Flow: {flow_emoji}{flow_sentiment.title()}"
+                    response += "\n"
 
                 if len(optimal_options) > 6:
                     response += f"\n... and {len(optimal_options) - 6} more options\n"
 
                 response += f"\n💡 **To select an option:** Reply with `Pick [SYMBOL] $[STRIKE]`\n"
                 response += f"🎯 **Example:** `Pick {optimal_options[0]['symbol']} ${optimal_options[0]['strike']}`\n\n"
-                response += f"🧬 **Advanced Analysis Features:**\n"
-                response += f"- Fractal Volatility Analysis\n"
-                response += f"- Gamma Squeeze Probability\n"
-                response += f"- Options Flow Momentum\n"
-                response += f"- Market Maker Impact Analysis\n"
-                response += f"- Multi-Dimensional Risk Scoring"
+                response += f"🏦 **Institutional-Grade Features (NEW):**\n"
+                response += f"- Real-time Market Sentiment Analysis\n"
+                response += f"- Market Regime Detection & Adaptive Criteria\n"
+                response += f"- Options Flow & Unusual Activity Detection\n"
+                response += f"- 7 Novel Analysis Techniques (Fractal Volatility, Gamma Squeeze, etc.)\n"
+                response += f"- **ALWAYS Shows Best Available Options** (Never \"None Found\")\n"
+                response += f"- Enhanced Composite Scoring with Sentiment Multipliers"
 
                 await say(response)
             else:
-                await say(f"❌ **No Optimal Options Found**\n\nNo options met the Smart Picks criteria. Try adjusting parameters or try again later when market conditions improve.")
+                # This should rarely happen with enhanced version since it always shows results
+                market_context = analysis.get('market_context', {})
+                response = f"⚠️ **No Options Data Available**\n\n"
+                response += f"**Market Status:**\n"
+                response += f"- Regime: {market_context.get('regime', 'Unknown').title()}\n"
+                response += f"- {market_context.get('message', 'Markets may be closed or data unavailable')}\n\n"
+                response += f"**This is unusual with Enhanced Smart Picks** - we normally always show best available options.\n"
+                response += f"Please try again in a few minutes or when markets are open."
+                await say(response)
         else:
-            await say(f"❌ **Smart Picks Analysis Failed**\n\nThere was an error running the advanced analysis. Please try again later.")
+            await say(f"❌ **Enhanced Smart Picks Analysis Failed**\n\nThere was an error running the institutional-grade analysis. Please try again later.\n\n*Note: Enhanced Smart Picks includes real-time sentiment, market regime detection, and options flow analysis.*")
 
     except Exception as e:
         logger.error(f"Error handling Smart Picks command: {e}")
