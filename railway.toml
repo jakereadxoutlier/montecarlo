@@ -4,6 +4,8 @@ builder = "nixpacks"
 [deploy]
 startCommand = "python3 server_railway_unified.py"
 restartPolicyType = "always"
+replicas = 1
+numReplicas = 1
 
 [environments.production]
 PORT = 8080

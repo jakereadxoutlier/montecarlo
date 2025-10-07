@@ -5757,11 +5757,13 @@ def setup_message_handlers(app):
         if any(word in text for word in ['help', 'commands', 'usage']):
             # Add deployment identifier
             import socket
+            import uuid
             hostname = socket.gethostname()[:8]  # First 8 chars of hostname
             deployment = os.getenv('RAILWAY_SERVICE_NAME', 'unknown')
+            replica = os.getenv('RAILWAY_REPLICA_ID', str(uuid.uuid4())[:6])
 
             help_text = f"""**🎯 MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis**
-**🔍 Deployment: {deployment} | Host: {hostname}**
+**🔍 Deployment: {deployment} | Host: {hostname} | Replica: {replica}**
 
 **📈 Core Commands:**
 - `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice + auto-monitoring for sell alerts
@@ -5899,7 +5901,9 @@ async def main():
         logger.error("Missing Slack tokens!")
         return
 
-    logger.info("🚀 Starting MonteCarlo Unified Bot...")
+    import uuid
+    bot_instance = str(uuid.uuid4())[:8]
+    logger.info(f"🚀 Starting MonteCarlo Unified Bot... [Bot Instance: {bot_instance}]")
 
     # Initialize Slack App
     app = AsyncApp(token=SLACK_BOT_TOKEN)

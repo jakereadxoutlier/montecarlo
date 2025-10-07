@@ -64,7 +64,9 @@ async def start_unified_bot():
 
 async def main():
     """Main entry point"""
-    logger.info("🎯 MonteCarlo Unified Server Starting...")
+    import uuid
+    instance_id = str(uuid.uuid4())[:8]
+    logger.info(f"🎯 MonteCarlo Unified Server Starting... [Instance: {instance_id}]")
     logger.info("📊 Single file architecture - No MCP complexity")
     logger.info("🔄 All features in one file")
 
