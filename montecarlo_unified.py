@@ -5755,7 +5755,7 @@ def setup_message_handlers(app):
 
         # Help command
         if any(word in text for word in ['help', 'commands', 'usage']):
-            help_text = """**🎯 StockFlow Bot - Institutional Grade Options Analysis**
+            help_text = """**🎯 MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis**
 
 **📈 Core Commands:**
 - `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice + auto-monitoring for sell alerts
@@ -5904,8 +5904,9 @@ async def main():
     # Start Socket Mode handler
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
 
-    logger.info("✅ MonteCarlo Bot Ready!")
+    logger.info("✅ MonteCarlo UNIFIED v2 Bot Ready!")
     logger.info("Commands: Smart Picks, Pick TSLA $430, Status, Help")
+    logger.info("This is the UNIFIED deployment - if you see duplicate responses, shut down old deployments")
 
     await handler.start_async()
 
