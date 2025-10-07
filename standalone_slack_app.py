@@ -37,35 +37,43 @@ MCP_SERVER_PARAMS = StdioServerParameters(
 
 # Global MCP session
 mcp_session = None
-mcp_read = None
-mcp_write = None
+mcp_context = None
 
-async def init_mcp_connection():
-    """Initialize persistent MCP connection."""
-    global mcp_session, mcp_read, mcp_write
+async def maintain_mcp_connection():
+    """Maintain persistent MCP connection in background."""
+    global mcp_session, mcp_context
     try:
-        logger.info("Initializing MCP connection to stockflow.py...")
-        mcp_read, mcp_write = await stdio_client(MCP_SERVER_PARAMS)
-        mcp_session = ClientSession(mcp_read, mcp_write)
-        await mcp_session.__aenter__()
-        await mcp_session.initialize()
-        logger.info("✅ MCP connection established successfully")
-        return True
+        logger.info("Starting MCP connection maintenance task...")
+        async with stdio_client(MCP_SERVER_PARAMS) as (read, write):
+            mcp_session = ClientSession(read, write)
+            mcp_context = mcp_session
+            await mcp_session.__aenter__()
+            await mcp_session.initialize()
+            logger.info("✅ MCP connection established successfully")
+
+            # Keep running forever to maintain connection
+            while True:
+                await asyncio.sleep(60)  # Keep alive
+
     except Exception as e:
-        logger.error(f"Failed to initialize MCP connection: {e}")
-        return False
+        logger.error(f"MCP connection task failed: {e}")
+        mcp_session = None
 
 async def call_mcp_tool(tool_name: str, arguments: dict):
     """Helper function to call MCP tools."""
     global mcp_session
 
     try:
-        # Initialize connection if needed
+        # Wait for connection if not ready
+        retries = 0
+        while not mcp_session and retries < 10:
+            logger.info(f"Waiting for MCP connection... (attempt {retries + 1})")
+            await asyncio.sleep(1)
+            retries += 1
+
         if not mcp_session:
-            success = await init_mcp_connection()
-            if not success:
-                logger.error("Failed to establish MCP connection")
-                return None
+            logger.error("MCP connection not available after 10 seconds")
+            return None
 
         # Call the tool
         result = await mcp_session.call_tool(tool_name, arguments=arguments)
@@ -75,8 +83,6 @@ async def call_mcp_tool(tool_name: str, arguments: dict):
         return None
     except Exception as e:
         logger.error(f"Error calling MCP tool {tool_name}: {e}")
-        # Try to reconnect on error
-        mcp_session = None
         return None
 
 async def _handle_smart_picks_internal(message, say):
@@ -420,11 +426,12 @@ async def main():
         logger.error(f"SLACK_APP_TOKEN present: {'Yes' if SLACK_APP_TOKEN else 'No'}")
         return
 
-    # Initialize MCP connection first
-    logger.info("🔌 Connecting to stockflow.py MCP server...")
-    mcp_success = await init_mcp_connection()
-    if not mcp_success:
-        logger.error("❌ Failed to connect to MCP server, but continuing anyway...")
+    # Start MCP connection as background task
+    logger.info("🔌 Starting MCP connection to stockflow.py...")
+    asyncio.create_task(maintain_mcp_connection())
+
+    # Wait a bit for MCP to connect
+    await asyncio.sleep(2)
 
     # Initialize Slack App with tokens
     logger.info("🔧 Initializing Monte Carlo Slack App...")
