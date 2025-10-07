@@ -168,19 +168,13 @@ async def _handle_smart_picks_internal(message, say):
 def setup_message_handlers(app):
     """Setup all Slack message handlers after app initialization - CLEAN VERSION."""
 
-    @app.message("smart picks")
-    async def handle_smart_picks_command(message, say):
+    # SMART PICKS MUST BE FIRST to avoid regex conflicts!
+    @app.message(re.compile(r'^smart\s*picks?', re.IGNORECASE))
+    async def handle_smart_picks_regex(message, say):
         await _handle_smart_picks_internal(message, say)
 
-    @app.message("smart pick")
-    async def handle_smart_pick_command(message, say):
-        await _handle_smart_picks_internal(message, say)
-
-    @app.message("smartpicks")
-    async def handle_smartpicks_command(message, say):
-        await _handle_smart_picks_internal(message, say)
-
-    @app.message(re.compile(r'^(pick|analyze|buy)\s+[A-Z]{2,5}\s+\$?\d+(\.\d+)?', re.IGNORECASE))
+    # More specific Pick command regex that WON'T match "smart picks"
+    @app.message(re.compile(r'^(pick|analyze|buy)\s+[A-Z]{2,5}\s+\$?\d+(\.\d+)?$', re.IGNORECASE))
     async def handle_pick_command(message, say):
         """Handle pick command with specific pattern."""
         try:

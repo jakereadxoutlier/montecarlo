@@ -2847,11 +2847,18 @@ def get_monitoring_status() -> Dict[str, Any]:
 # Slack App Management Functions
 async def start_slack_app() -> Dict[str, Any]:
     """
-    Start the Slack App for two-way interaction.
+    DISABLED - Using standalone_slack_app.py to avoid conflicts
 
     Returns:
         Dictionary with startup status
     """
+    # DISABLED to prevent conflicts with standalone_slack_app.py
+    return {
+        'started': False,
+        'status': 'disabled',
+        'message': 'Slack integration disabled in stockflow.py - using standalone_slack_app.py instead'
+    }
+
     global slack_app_running, slack_handler, slack_app
 
     try:
