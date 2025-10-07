@@ -42,22 +42,33 @@ mcp_context = None
 async def maintain_mcp_connection():
     """Maintain persistent MCP connection in background."""
     global mcp_session, mcp_context
-    try:
-        logger.info("Starting MCP connection maintenance task...")
-        async with stdio_client(MCP_SERVER_PARAMS) as (read, write):
-            mcp_session = ClientSession(read, write)
-            mcp_context = mcp_session
-            await mcp_session.__aenter__()
-            await mcp_session.initialize()
-            logger.info("✅ MCP connection established successfully")
 
-            # Keep running forever to maintain connection
-            while True:
-                await asyncio.sleep(60)  # Keep alive
+    max_retries = 5
+    retry_count = 0
 
-    except Exception as e:
-        logger.error(f"MCP connection task failed: {e}")
-        mcp_session = None
+    while retry_count < max_retries:
+        try:
+            logger.info(f"Starting MCP connection (attempt {retry_count + 1}/{max_retries})...")
+            async with stdio_client(MCP_SERVER_PARAMS) as (read, write):
+                mcp_session = ClientSession(read, write)
+                mcp_context = mcp_session
+                await mcp_session.__aenter__()
+                await mcp_session.initialize()
+                logger.info("✅ MCP connection established successfully")
+
+                # Keep running forever to maintain connection
+                while True:
+                    await asyncio.sleep(60)  # Keep alive
+
+        except Exception as e:
+            logger.error(f"MCP connection failed (attempt {retry_count + 1}): {e}")
+            mcp_session = None
+            retry_count += 1
+            if retry_count < max_retries:
+                await asyncio.sleep(5)  # Wait before retry
+            else:
+                logger.error(f"❌ Failed to establish MCP connection after {max_retries} attempts")
+                break
 
 async def call_mcp_tool(tool_name: str, arguments: dict):
     """Helper function to call MCP tools."""
@@ -73,7 +84,12 @@ async def call_mcp_tool(tool_name: str, arguments: dict):
 
         if not mcp_session:
             logger.error("MCP connection not available after 10 seconds")
-            return None
+            # Return a fallback error message instead of None
+            return {
+                'success': False,
+                'error': 'MCP server (stockflow.py) is not connected. The server may be starting up or crashed.',
+                'fallback': True
+            }
 
         # Call the tool
         result = await mcp_session.call_tool(tool_name, arguments=arguments)
@@ -81,9 +97,20 @@ async def call_mcp_tool(tool_name: str, arguments: dict):
         if result.content and hasattr(result.content[0], 'text'):
             return json.loads(result.content[0].text)
         return None
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error for {tool_name}: {e}")
+        return {
+            'success': False,
+            'error': f'Invalid response format from {tool_name}',
+            'fallback': True
+        }
     except Exception as e:
         logger.error(f"Error calling MCP tool {tool_name}: {e}")
-        return None
+        return {
+            'success': False,
+            'error': str(e),
+            'fallback': True
+        }
 
 async def _handle_smart_picks_internal(message, say):
     """Handle 'Smart Picks' command for optimal risk/reward options ≤30 days."""
@@ -430,8 +457,9 @@ async def main():
     logger.info("🔌 Starting MCP connection to stockflow.py...")
     asyncio.create_task(maintain_mcp_connection())
 
-    # Wait a bit for MCP to connect
-    await asyncio.sleep(2)
+    # Wait longer for MCP to connect and be ready
+    logger.info("⏳ Waiting for MCP server to initialize...")
+    await asyncio.sleep(10)  # Give stockflow.py time to fully start
 
     # Initialize Slack App with tokens
     logger.info("🔧 Initializing Monte Carlo Slack App...")

@@ -1281,7 +1281,10 @@ def calculate_profit_scenarios(option_data: Dict[str, Any]) -> Dict[str, Any]:
 
 # Slack Event Handlers
 async def handle_message_events(message, say, logger):
-    """Handle all direct messages and mentions to the bot."""
+    """DISABLED - Using standalone_slack_app.py instead."""
+    return  # COMPLETELY DISABLED - All Slack handling done by standalone_slack_app.py
+
+    # DEAD CODE BELOW - NEVER EXECUTED
     try:
         # Extract relevant information
         text = message.get('text', '').strip()
@@ -2875,16 +2878,17 @@ async def start_slack_app() -> Dict[str, Any]:
                 'status': 'active'
             }
 
+        # DISABLED - Using standalone_slack_app.py
         # Initialize Slack App and handler now that event loop is available
-        if not slack_app:
-            slack_app = AsyncApp(token=SLACK_BOT_TOKEN)
+        # if not slack_app:
+        #     slack_app = AsyncApp(token=SLACK_BOT_TOKEN)
 
-            # Add message handler
-            @slack_app.message(re.compile(r".*"))
-            async def handle_slack_message(message, say, logger):
-                await handle_message_events(message, say, logger)
+        #     # Add message handler
+        #     @slack_app.message(re.compile(r".*"))
+        #     async def handle_slack_message(message, say, logger):
+        #         await handle_message_events(message, say, logger)
 
-            slack_handler = AsyncSocketModeHandler(slack_app, SLACK_APP_TOKEN)
+        #     slack_handler = AsyncSocketModeHandler(slack_app, SLACK_APP_TOKEN)
 
         # Start the Slack app in the background
         logger.info("Starting Slack App...")
