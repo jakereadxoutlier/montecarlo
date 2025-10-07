@@ -62,8 +62,9 @@ async def start_slack_app():
 
 async def main():
     """Main entry point"""
-    logger.info("🎯 StockFlow Railway Server Starting...")
-    logger.info("📊 Using existing standalone_slack_app.py with all commands")
+    logger.info("🎯 StockFlow Railway Server Starting... v2.0")
+    logger.info("📊 Using existing standalone_slack_app.py with Smart Picks")
+    logger.info("🔄 Force rebuild: October 6, 2025 - Full command set")
 
     try:
         # Start HTTP server first (for Railway)
