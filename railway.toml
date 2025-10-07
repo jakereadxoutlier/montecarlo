@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python3 server_railway.py"
+startCommand = "python3 server_railway_unified.py"
 restartPolicyType = "always"
 
 [environments.production]
