@@ -35,19 +35,48 @@ MCP_SERVER_PARAMS = StdioServerParameters(
     args=["/app/stockflow.py"]
 )
 
+# Global MCP session
+mcp_session = None
+mcp_read = None
+mcp_write = None
+
+async def init_mcp_connection():
+    """Initialize persistent MCP connection."""
+    global mcp_session, mcp_read, mcp_write
+    try:
+        logger.info("Initializing MCP connection to stockflow.py...")
+        mcp_read, mcp_write = await stdio_client(MCP_SERVER_PARAMS)
+        mcp_session = ClientSession(mcp_read, mcp_write)
+        await mcp_session.__aenter__()
+        await mcp_session.initialize()
+        logger.info("✅ MCP connection established successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize MCP connection: {e}")
+        return False
+
 async def call_mcp_tool(tool_name: str, arguments: dict):
     """Helper function to call MCP tools."""
-    try:
-        async with stdio_client(MCP_SERVER_PARAMS) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool_name, arguments=arguments)
+    global mcp_session
 
-                if result.content and hasattr(result.content[0], 'text'):
-                    return json.loads(result.content[0].text)
+    try:
+        # Initialize connection if needed
+        if not mcp_session:
+            success = await init_mcp_connection()
+            if not success:
+                logger.error("Failed to establish MCP connection")
                 return None
+
+        # Call the tool
+        result = await mcp_session.call_tool(tool_name, arguments=arguments)
+
+        if result.content and hasattr(result.content[0], 'text'):
+            return json.loads(result.content[0].text)
+        return None
     except Exception as e:
         logger.error(f"Error calling MCP tool {tool_name}: {e}")
+        # Try to reconnect on error
+        mcp_session = None
         return None
 
 async def _handle_smart_picks_internal(message, say):
@@ -390,6 +419,12 @@ async def main():
         logger.error(f"SLACK_BOT_TOKEN present: {'Yes' if SLACK_BOT_TOKEN else 'No'}")
         logger.error(f"SLACK_APP_TOKEN present: {'Yes' if SLACK_APP_TOKEN else 'No'}")
         return
+
+    # Initialize MCP connection first
+    logger.info("🔌 Connecting to stockflow.py MCP server...")
+    mcp_success = await init_mcp_connection()
+    if not mcp_success:
+        logger.error("❌ Failed to connect to MCP server, but continuing anyway...")
 
     # Initialize Slack App with tokens
     logger.info("🔧 Initializing Monte Carlo Slack App...")
