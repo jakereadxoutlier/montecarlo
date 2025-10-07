@@ -1308,30 +1308,11 @@ async def handle_message_events(message, say, logger):
             return
 
         if parsed['command'] == 'help':
-            help_text = """**StockFlow Bot Commands:**
-
-- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice for an option (auto-monitors for sell alerts)
-- `Analyze [SYMBOL] $[STRIKE]` - Same as Pick
-- `Buy [SYMBOL] $[STRIKE]` - Same as Pick
-- `Options for [MM/DD/YYYY]` - Find best options for a specific expiration date
-- `Help` - Show this help message
-
-**Examples:**
-- `Pick TSLA $430` - Analyzes and starts monitoring
-- `Options for 10/10/2025` - Shows best options expiring that Friday
-- `Analyze AAPL $200`
-
-I provide real-time option analysis with buy/sell recommendations based on:
-- ITM probability (20K Monte Carlo)
-- Greek analysis (Delta, Gamma, Theta, Vega)
-- Market sentiment and news analysis
-- Automatic sell alert notifications"""
-
-            await say({
-                "text": help_text,
-                "channel": channel_id
-            })
+            # COMPLETELY REMOVED - handled by standalone_slack_app.py
             return
+
+        # ALL COMMANDS REMOVED - handled by standalone_slack_app.py
+        return
 
         if parsed['command'] == 'pick':
             # Show typing indicator
