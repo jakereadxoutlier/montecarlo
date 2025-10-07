@@ -5902,11 +5902,29 @@ async def main():
         return
 
     import uuid
+    import socket
     bot_instance = str(uuid.uuid4())[:8]
     logger.info(f"🚀 Starting MonteCarlo Unified Bot... [Bot Instance: {bot_instance}]")
 
     # Initialize Slack App
     app = AsyncApp(token=SLACK_BOT_TOKEN)
+
+    # DUPLICATE KILLER - Post startup message to claim ownership
+    # Comment this out for now - we'll use a different approach
+    # try:
+    #     startup_msg = (
+    #         f"🤖 **MonteCarlo UNIFIED v2 Started**\n"
+    #         f"Instance: {bot_instance}\n"
+    #         f"Host: {socket.gethostname()}\n"
+    #         f"Time: {datetime.datetime.now()}\n\n"
+    #         f"⚠️ If you see multiple startup messages, you have duplicates!"
+    #     )
+    #     await app.client.chat_postMessage(
+    #         channel="general",  # Change to your channel
+    #         text=startup_msg
+    #     )
+    # except Exception as e:
+    #     logger.warning(f"Could not post startup message: {e}")
 
     # Setup message handlers
     setup_message_handlers(app)
