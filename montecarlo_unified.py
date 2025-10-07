@@ -63,17 +63,32 @@ session.mount("https://", adapter)
 # Apply session to yfinance
 yf.utils.get_session = lambda: session
 
-# Rate limiting configuration
-CONCURRENT_REQUESTS = 5  # Max concurrent yfinance requests
-REQUEST_DELAY = 0.5      # Delay between batches (seconds)
+# Rate limiting configuration - MORE AGGRESSIVE
+CONCURRENT_REQUESTS = 2  # Reduced from 5 to 2 concurrent requests
+REQUEST_DELAY = 1.0      # Increased from 0.5 to 1.0 second
 rate_limit_semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
-async def rate_limited_ticker(symbol: str) -> yf.Ticker:
-    """Create a yfinance Ticker with rate limiting"""
+async def rate_limited_ticker(symbol: str, retries: int = 3) -> yf.Ticker:
+    """Create a yfinance Ticker with rate limiting and retry logic"""
     async with rate_limit_semaphore:
-        await asyncio.sleep(REQUEST_DELAY)
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, yf.Ticker, symbol)
+        for attempt in range(retries):
+            try:
+                await asyncio.sleep(REQUEST_DELAY)
+                loop = asyncio.get_event_loop()
+                ticker = await loop.run_in_executor(None, yf.Ticker, symbol)
+
+                # Test if ticker is valid by checking info
+                info = await loop.run_in_executor(None, lambda: ticker.info)
+                if info and (info.get('regularMarketPrice') or info.get('currentPrice')):
+                    return ticker
+
+            except Exception as e:
+                if attempt == retries - 1:
+                    logger.warning(f"Failed to get ticker {symbol} after {retries} attempts: {e}")
+                    raise
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+        raise ValueError(f"Unable to get valid ticker for {symbol}")
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -1132,6 +1147,13 @@ def retry_on_error(max_retries: int = 3, delay: float = 1.0):
             raise last_error
         return wrapper
     return decorator
+
+# Most liquid options symbols - these have highest volume and best spreads
+LIQUID_OPTIONS_SYMBOLS = [
+    'SPY', 'QQQ', 'AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN',
+    'META', 'GOOGL', 'NFLX', 'SOFI', 'PLTR', 'F', 'BAC', 'XOM',
+    'DIS', 'UBER', 'RIVN', 'NIO'
+]
 
 # Fortune 500 stock symbols (top 100 most liquid for performance)
 FORTUNE_500_SYMBOLS = [
@@ -5116,8 +5138,8 @@ async def find_optimal_risk_reward_options_enhanced(
 
     # Process symbols in batches to avoid rate limiting
     all_results = []
-    batch_size = 5  # Process 5 symbols at a time
-    symbols_to_analyze = symbols[:50]  # Reduce from 100 to 50 for better performance
+    batch_size = 2  # Reduced from 5 to 2 symbols at a time
+    symbols_to_analyze = symbols[:20]  # Reduced from 50 to 20 for reliability
 
     logger.info(f"Analyzing {len(symbols_to_analyze)} symbols in batches of {batch_size}")
 
@@ -5129,9 +5151,9 @@ async def find_optimal_risk_reward_options_enhanced(
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
         all_results.extend(batch_results)
 
-        # Add delay between batches to avoid rate limiting
+        # Add longer delay between batches to avoid rate limiting
         if i + batch_size < len(symbols_to_analyze):
-            await asyncio.sleep(1.0)  # 1 second delay between batches
+            await asyncio.sleep(2.0)  # Increased to 2 second delay between batches
 
     results = all_results
 
@@ -5521,9 +5543,9 @@ async def _handle_smart_picks_internal(message, say):
         else:
             await say(f"🔢 **Smart Picks Analysis Starting**\n🔍 Finding optimal options using mathematical analysis...\n⏳ This may take 30-60 seconds.")
 
-        # Call the function directly (no MCP)
+        # Call the function directly (no MCP) - use most liquid symbols
         result = await find_optimal_risk_reward_options_enhanced(
-            symbols=FORTUNE_500_SYMBOLS[:50],  # Limit for performance
+            symbols=LIQUID_OPTIONS_SYMBOLS,  # Use most liquid symbols for reliability
             max_days_to_expiry=30,
             target_profit_potential=0.15,
             target_probability=0.45,
