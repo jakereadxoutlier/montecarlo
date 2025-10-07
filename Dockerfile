@@ -23,14 +23,14 @@ COPY . .
 RUN mkdir -p /app/logs
 
 # Make server executable
-RUN chmod +x server.py
+RUN chmod +x server_railway_unified.py
 
-# Expose port (even though we're using Socket Mode)
+# Expose port for Railway health checks
 EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD python3 -c "print('StockFlow is healthy')" || exit 1
+  CMD curl -f http://localhost:8080/health || exit 1
 
-# Run the production server
-CMD ["python3", "server.py"]
+# Run the unified server
+CMD ["python3", "server_railway_unified.py"]
