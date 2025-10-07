@@ -51,7 +51,7 @@ async def start_unified_bot():
         logger.info("🚀 Starting MonteCarlo Unified Bot...")
 
         # Import and run the unified bot
-        from montecarlo_unified_complete import main as run_bot
+        from montecarlo_unified import main as run_bot
 
         # Run as background task
         asyncio.create_task(run_bot())
