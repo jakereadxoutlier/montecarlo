@@ -31,6 +31,50 @@ from slack_sdk.errors import SlackApiError
 import dotenv
 # Advanced engine defined below
 
+# ============================================================================
+# RATE LIMITING AND CONNECTION MANAGEMENT FOR YFINANCE
+# ============================================================================
+
+# Configure yfinance to handle rate limiting better
+import urllib3
+from urllib3.util import Retry
+from requests.adapters import HTTPAdapter
+
+# Increase connection pool size for yfinance
+session = requests.Session()
+session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+
+# Configure retry strategy with exponential backoff
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+
+adapter = HTTPAdapter(
+    max_retries=retry_strategy,
+    pool_connections=50,  # Increased from default 10
+    pool_maxsize=100,     # Increased from default 10
+)
+
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+# Apply session to yfinance
+yf.utils.get_session = lambda: session
+
+# Rate limiting configuration
+CONCURRENT_REQUESTS = 5  # Max concurrent yfinance requests
+REQUEST_DELAY = 0.5      # Delay between batches (seconds)
+rate_limit_semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+async def rate_limited_ticker(symbol: str) -> yf.Ticker:
+    """Create a yfinance Ticker with rate limiting"""
+    async with rate_limit_semaphore:
+        await asyncio.sleep(REQUEST_DELAY)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, yf.Ticker, symbol)
+
 # Load environment variables
 dotenv.load_dotenv()
 
@@ -398,7 +442,7 @@ class PatternMatcher:
     ) -> Dict[str, Any]:
         """Find historical patterns similar to current setup"""
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = await rate_limited_ticker(symbol)
             hist = ticker.history(period="2y")  # 2 years of data
 
             if len(hist) < 100:
@@ -844,7 +888,7 @@ async def get_insider_trading_data(symbol: str) -> Dict[str, Any]:
     """Get insider trading data - CRITICAL FOR PREDICTING MOVES."""
     try:
         # Use yfinance insider data since Alpha Vantage insider data requires higher tier
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
 
         # Get recent insider transactions
         try:
@@ -901,7 +945,7 @@ async def get_insider_trading_data(symbol: str) -> Dict[str, Any]:
 async def get_options_gamma_squeeze_probability(symbol: str, current_price: float) -> Dict[str, Any]:
     """Calculate gamma squeeze probability - CRITICAL FOR EXPLOSIVE MOVES."""
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
 
         squeeze_indicators = {
             'gamma_exposure': 0.0,
@@ -972,7 +1016,7 @@ async def get_options_gamma_squeeze_probability(symbol: str, current_price: floa
 async def get_short_interest_data(symbol: str) -> Dict[str, Any]:
     """Get short interest - HIGH SHORT INTEREST = SQUEEZE POTENTIAL."""
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
         info = ticker.info
 
         short_ratio = info.get('shortRatio', 0) or 0
@@ -1590,7 +1634,7 @@ async def get_realtime_option_data(symbol: str, strike: float, expiration_date: 
         Dictionary with real-time option analysis
     """
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
 
         # Get current stock price
         info = ticker.info
@@ -2999,7 +3043,7 @@ async def monitor_selected_options():
 
             for symbol in symbols:
                 try:
-                    ticker = yf.Ticker(symbol)
+                    ticker = await rate_limited_ticker(symbol)
 
                     # Get real-time price (FREE)
                     info = ticker.info
@@ -3776,7 +3820,7 @@ async def historical_pattern_recognition(
     """
     try:
         # Get historical data for the symbol
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
         hist_data = ticker.history(period=f"{lookback_days * 2}d")
 
         if len(hist_data) < lookback_days:
@@ -3908,7 +3952,7 @@ async def event_driven_analysis(symbol: str, days_ahead: int = 30) -> Dict[str, 
     event_adjustments = {}
 
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
         info = ticker.info
 
         # Enhanced Earnings Analysis with Alpha Vantage
@@ -4082,7 +4126,7 @@ async def cross_asset_correlation_analysis(
 
     try:
         # Get stock data
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
         stock_data = ticker.history(period=f"{lookback_days + 10}d")
 
         if len(stock_data) < 30:
@@ -4213,7 +4257,7 @@ async def advanced_volatility_forecasting(
     """
     try:
         # Get historical data
-        ticker = yf.Ticker(symbol)
+        ticker = await rate_limited_ticker(symbol)
         hist_data = ticker.history(period=f"{lookback_days + 30}d")
 
         if len(hist_data) < 50:
@@ -4376,7 +4420,7 @@ async def get_realtime_market_sentiment(symbols: List[str], timeframe: str = "4h
             # Analyst Sentiment (using yfinance recommendations)
             analyst_sentiment = 0.0
             try:
-                ticker = yf.Ticker(symbol)
+                ticker = await rate_limited_ticker(symbol)
                 recommendations = ticker.recommendations
                 if recommendations is not None and not recommendations.empty:
                     recent_rec = recommendations.tail(5)  # Last 5 recommendations
@@ -4583,7 +4627,7 @@ async def get_options_flow_analysis(symbols: List[str], timeframe: str = "4h", m
 
     for symbol in symbols:
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = await rate_limited_ticker(symbol)
             # Get current options chain
             exp_dates = ticker.options
 
@@ -4752,8 +4796,9 @@ async def find_optimal_risk_reward_options_enhanced(
     async def analyze_symbol_enhanced(symbol: str) -> List[Dict[str, Any]]:
         symbol_options = []
         try:
+            # Use rate-limited ticker creation
+            ticker = await rate_limited_ticker(symbol)
             loop = asyncio.get_event_loop()
-            ticker = await loop.run_in_executor(None, yf.Ticker, symbol)
 
             options_dates = await loop.run_in_executor(None, lambda: ticker.options)
             if not options_dates:
@@ -5069,9 +5114,26 @@ async def find_optimal_risk_reward_options_enhanced(
 
         return symbol_options
 
-    # Process symbols concurrently
-    tasks = [analyze_symbol_enhanced(symbol) for symbol in symbols[:100]]  # Limit to top 100 for performance
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Process symbols in batches to avoid rate limiting
+    all_results = []
+    batch_size = 5  # Process 5 symbols at a time
+    symbols_to_analyze = symbols[:50]  # Reduce from 100 to 50 for better performance
+
+    logger.info(f"Analyzing {len(symbols_to_analyze)} symbols in batches of {batch_size}")
+
+    for i in range(0, len(symbols_to_analyze), batch_size):
+        batch = symbols_to_analyze[i:i + batch_size]
+        logger.info(f"Processing batch {i//batch_size + 1}: {batch}")
+
+        tasks = [analyze_symbol_enhanced(symbol) for symbol in batch]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_results.extend(batch_results)
+
+        # Add delay between batches to avoid rate limiting
+        if i + batch_size < len(symbols_to_analyze):
+            await asyncio.sleep(1.0)  # 1 second delay between batches
+
+    results = all_results
 
     for result in results:
         if isinstance(result, list):
