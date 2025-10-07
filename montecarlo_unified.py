@@ -5755,7 +5755,13 @@ def setup_message_handlers(app):
 
         # Help command
         if any(word in text for word in ['help', 'commands', 'usage']):
-            help_text = """**🎯 MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis**
+            # Add deployment identifier
+            import socket
+            hostname = socket.gethostname()[:8]  # First 8 chars of hostname
+            deployment = os.getenv('RAILWAY_SERVICE_NAME', 'unknown')
+
+            help_text = f"""**🎯 MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis**
+**🔍 Deployment: {deployment} | Host: {hostname}**
 
 **📈 Core Commands:**
 - `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice + auto-monitoring for sell alerts
