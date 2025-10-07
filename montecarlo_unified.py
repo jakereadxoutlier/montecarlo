@@ -81,6 +81,632 @@ class AdvancedOptionsEngine:
 # Initialize Advanced Options Engine for novel analysis techniques
 advanced_engine = AdvancedOptionsEngine()
 
+# ============================================================================
+# AI CLIENT CLASSES FOR ENHANCED INTELLIGENCE
+# ============================================================================
+
+class PerplexityClient:
+    """Client for Perplexity AI API - Real-time web search with citations"""
+
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or PERPLEXITY_API_KEY
+        self.base_url = "https://api.perplexity.ai"
+        self.enabled = bool(self.api_key)
+
+    async def search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+        """Search the web with Perplexity for real-time information"""
+        if not self.enabled:
+            return {"error": "Perplexity API key not configured", "results": []}
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": "pplx-70b-online",
+                "messages": [{"role": "user", "content": query}],
+                "max_tokens": 1000,
+                "temperature": 0.2,
+                "return_citations": True
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "success": True,
+                            "answer": data.get("choices", [{}])[0].get("message", {}).get("content", ""),
+                            "citations": data.get("citations", [])
+                        }
+                    else:
+                        return {"error": f"Perplexity API error: {response.status}"}
+        except Exception as e:
+            logger.error(f"Perplexity search error: {e}")
+            return {"error": str(e)}
+
+class SerperClient:
+    """Client for Serper API - Google search for market data and unusual activity"""
+
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or SERPER_API_KEY
+        self.base_url = "https://google.serper.dev/search"
+        self.enabled = bool(self.api_key)
+
+    async def search(self, query: str, num_results: int = 10) -> Dict[str, Any]:
+        """Search Google via Serper for unusual options activity and market data"""
+        if not self.enabled:
+            return {"error": "Serper API key not configured", "results": []}
+
+        try:
+            headers = {
+                "X-API-KEY": self.api_key,
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "q": query,
+                "num": num_results,
+                "gl": "us",
+                "hl": "en"
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.base_url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "success": True,
+                            "organic": data.get("organic", []),
+                            "answer_box": data.get("answerBox", {}),
+                            "knowledge_graph": data.get("knowledgeGraph", {})
+                        }
+                    else:
+                        return {"error": f"Serper API error: {response.status}"}
+        except Exception as e:
+            logger.error(f"Serper search error: {e}")
+            return {"error": str(e)}
+
+class LLMClient:
+    """Unified client for LLM APIs (OpenAI GPT-4 or Anthropic Claude)"""
+
+    def __init__(self):
+        self.openai_key = OPENAI_API_KEY
+        self.anthropic_key = ANTHROPIC_API_KEY
+        self.provider = "openai" if self.openai_key else "anthropic" if self.anthropic_key else None
+        self.enabled = bool(self.provider)
+
+    async def analyze(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Get AI analysis from GPT-4 or Claude"""
+        if not self.enabled:
+            return {"error": "No LLM API key configured", "analysis": None}
+
+        try:
+            if self.provider == "openai":
+                return await self._openai_analyze(prompt, context)
+            elif self.provider == "anthropic":
+                return await self._anthropic_analyze(prompt, context)
+        except Exception as e:
+            logger.error(f"LLM analysis error: {e}")
+            return {"error": str(e), "analysis": None}
+
+    async def _openai_analyze(self, prompt: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Call OpenAI GPT-4 for analysis"""
+        headers = {
+            "Authorization": f"Bearer {self.openai_key}",
+            "Content-Type": "application/json"
+        }
+
+        system_prompt = """You are an elite options trader with 20 years experience at Goldman Sachs.
+        Analyze options with institutional-grade insights. Be specific about entry/exit points,
+        risk factors, and market microstructure. Provide conviction scores 1-10."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"{prompt}\n\nContext: {json.dumps(context) if context else 'N/A'}"}
+        ]
+
+        payload = {
+            "model": "gpt-4-turbo-preview",
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 1500
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.openai.com/v1/chat/completions",
+                json=payload,
+                headers=headers
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "success": True,
+                        "analysis": data["choices"][0]["message"]["content"],
+                        "provider": "gpt-4"
+                    }
+                return {"error": f"OpenAI API error: {response.status}"}
+
+    async def _anthropic_analyze(self, prompt: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Call Anthropic Claude for analysis"""
+        headers = {
+            "x-api-key": self.anthropic_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        system_prompt = """You are an elite options trader with 20 years experience at Goldman Sachs.
+        Analyze options with institutional-grade insights. Be specific about entry/exit points,
+        risk factors, and market microstructure. Provide conviction scores 1-10."""
+
+        payload = {
+            "model": "claude-3-opus-20240229",
+            "system": system_prompt,
+            "messages": [{
+                "role": "user",
+                "content": f"{prompt}\n\nContext: {json.dumps(context) if context else 'N/A'}"
+            }],
+            "max_tokens": 1500,
+            "temperature": 0.3
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.anthropic.com/v1/messages",
+                json=payload,
+                headers=headers
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "success": True,
+                        "analysis": data["content"][0]["text"],
+                        "provider": "claude"
+                    }
+                return {"error": f"Anthropic API error: {response.status}"}
+
+# AI clients will be initialized after configuration
+
+# ============================================================================
+# SENIOR ANALYST FEATURES - Dynamic Thresholds & Market Intelligence
+# ============================================================================
+
+class MarketRegimeDetector:
+    """Detect current market regime to adjust trading strategies"""
+
+    @staticmethod
+    async def get_current_regime() -> Dict[str, Any]:
+        """Identify current market behavior pattern"""
+        try:
+            # Get SPY and VIX data
+            spy = yf.Ticker("SPY")
+            vix = yf.Ticker("^VIX")
+
+            spy_hist = spy.history(period="1mo")
+            vix_info = vix.info
+
+            # Calculate regime indicators
+            spy_returns = spy_hist['Close'].pct_change().dropna()
+            volatility = spy_returns.std() * np.sqrt(252)  # Annualized
+            trend = (spy_hist['Close'][-1] / spy_hist['Close'][-20] - 1) if len(spy_hist) >= 20 else 0
+            vix_level = vix_info.get('regularMarketPrice', 20)
+
+            # Determine regime
+            if vix_level < 15 and volatility < 0.12:
+                regime = "low_vol_grind"
+                characteristics = "Steady uptrend, sell puts/call spreads work well"
+            elif vix_level > 30:
+                regime = "high_fear"
+                characteristics = "Extreme volatility, be selective, size down"
+            elif trend > 0.05 and vix_level < 20:
+                regime = "strong_uptrend"
+                characteristics = "Momentum plays work, buy calls on dips"
+            elif trend < -0.05 and vix_level > 25:
+                regime = "correction"
+                characteristics = "Defensive mode, wait for stabilization"
+            elif abs(trend) < 0.02 and 18 < vix_level < 25:
+                regime = "choppy_sideways"
+                characteristics = "Range-bound, iron condors and butterflies"
+            else:
+                regime = "normal"
+                characteristics = "Balanced market, standard strategies apply"
+
+            return {
+                "regime": regime,
+                "characteristics": characteristics,
+                "vix": vix_level,
+                "spy_trend": trend,
+                "volatility": volatility,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.warning(f"Regime detection failed: {e}")
+            return {
+                "regime": "unknown",
+                "characteristics": "Unable to determine",
+                "error": str(e)
+            }
+
+class DynamicThresholdManager:
+    """Manage adaptive thresholds based on market conditions"""
+
+    @staticmethod
+    def get_itm_threshold(context: Dict[str, Any]) -> float:
+        """Get dynamic ITM probability threshold based on context"""
+        base_threshold = 0.45  # Default threshold
+
+        # Adjust for market regime
+        regime = context.get('market_regime', {}).get('regime', 'normal')
+        if regime == 'high_fear':
+            base_threshold += 0.10  # Need higher certainty in volatile markets
+        elif regime == 'low_vol_grind':
+            base_threshold -= 0.05  # Can accept lower probability in calm markets
+        elif regime == 'correction':
+            base_threshold += 0.15  # Very selective during corrections
+
+        # Adjust for time to expiration
+        days_to_expiry = context.get('days_to_expiry', 30)
+        if days_to_expiry < 7:
+            base_threshold += 0.10  # Need higher probability near expiration
+        elif days_to_expiry < 14:
+            base_threshold += 0.05
+
+        # Adjust for earnings proximity
+        if context.get('earnings_in_days', 100) < 5:
+            base_threshold += 0.05  # Binary event risk
+
+        # Adjust for IV rank
+        iv_rank = context.get('iv_rank', 50)
+        if iv_rank > 80:  # Very high IV
+            base_threshold += 0.05
+        elif iv_rank < 20:  # Very low IV
+            base_threshold -= 0.05
+
+        # Cap the threshold
+        return max(0.30, min(0.70, base_threshold))
+
+    @staticmethod
+    def get_profit_threshold(context: Dict[str, Any]) -> float:
+        """Get dynamic profit taking threshold"""
+        base_threshold = 0.15  # 15% default
+
+        regime = context.get('market_regime', {}).get('regime', 'normal')
+        if regime == 'strong_uptrend':
+            base_threshold = 0.25  # Let winners run
+        elif regime == 'choppy_sideways':
+            base_threshold = 0.10  # Take profits quickly
+        elif regime == 'high_fear':
+            base_threshold = 0.12  # Quick profits in volatility
+
+        return base_threshold
+
+class PatternMatcher:
+    """Historical pattern matching for similar setups"""
+
+    @staticmethod
+    async def find_similar_historical_setups(
+        symbol: str,
+        current_setup: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Find historical patterns similar to current setup"""
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="2y")  # 2 years of data
+
+            if len(hist) < 100:
+                return {"error": "Insufficient historical data"}
+
+            current_iv = current_setup.get('iv', 0.3)
+            current_rsi = current_setup.get('rsi', 50)
+            current_trend = current_setup.get('trend', 0)
+
+            # Find similar conditions in history
+            similar_days = []
+            for i in range(20, len(hist) - 20):  # Need forward data
+                # Calculate historical metrics
+                historical_returns = hist['Close'][i-20:i].pct_change().dropna()
+                historical_vol = historical_returns.std() * np.sqrt(252)
+                historical_trend = (hist['Close'][i] / hist['Close'][i-20] - 1)
+
+                # Check similarity (within 20% of current values)
+                vol_similar = abs(historical_vol - current_iv) / current_iv < 0.2
+                trend_similar = abs(historical_trend - current_trend) < 0.02
+
+                if vol_similar and trend_similar:
+                    # Calculate forward returns
+                    forward_return_5d = (hist['Close'][i+5] / hist['Close'][i] - 1)
+                    forward_return_10d = (hist['Close'][i+10] / hist['Close'][i] - 1)
+                    forward_return_20d = (hist['Close'][i+20] / hist['Close'][i] - 1)
+
+                    similar_days.append({
+                        'date': hist.index[i],
+                        'forward_5d': forward_return_5d,
+                        'forward_10d': forward_return_10d,
+                        'forward_20d': forward_return_20d
+                    })
+
+            if similar_days:
+                # Calculate statistics
+                returns_5d = [d['forward_5d'] for d in similar_days]
+                returns_10d = [d['forward_10d'] for d in similar_days]
+                returns_20d = [d['forward_20d'] for d in similar_days]
+
+                return {
+                    'similar_setups_found': len(similar_days),
+                    'win_rate_5d': len([r for r in returns_5d if r > 0]) / len(returns_5d),
+                    'win_rate_10d': len([r for r in returns_10d if r > 0]) / len(returns_10d),
+                    'win_rate_20d': len([r for r in returns_20d if r > 0]) / len(returns_20d),
+                    'avg_return_5d': np.mean(returns_5d),
+                    'avg_return_10d': np.mean(returns_10d),
+                    'avg_return_20d': np.mean(returns_20d),
+                    'best_return': max(returns_20d),
+                    'worst_return': min(returns_20d),
+                    'recommendation': 'favorable' if np.mean(returns_10d) > 0.02 else 'neutral' if np.mean(returns_10d) > 0 else 'unfavorable'
+                }
+            else:
+                return {'similar_setups_found': 0, 'recommendation': 'no_historical_match'}
+
+        except Exception as e:
+            logger.error(f"Pattern matching error for {symbol}: {e}")
+            return {'error': str(e)}
+
+class EnhancedScoring:
+    """Multi-factor scoring system for senior-level analysis"""
+
+    @staticmethod
+    def calculate_composite_score(
+        option_data: Dict[str, Any],
+        market_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Calculate sophisticated multi-factor score"""
+
+        scores = {}
+
+        # 1. Mathematical Score (existing Monte Carlo, Greeks)
+        itm_prob = option_data.get('itm_probability', 0)
+        scores['math_score'] = itm_prob * 100
+
+        # 2. Volatility Score (mean reversion, IV rank)
+        iv_rank = option_data.get('iv_rank', 50)
+        if iv_rank > 80:  # High IV, likely to contract
+            scores['volatility_score'] = 30 + (100 - iv_rank) * 0.5
+        elif iv_rank < 20:  # Low IV, likely to expand
+            scores['volatility_score'] = 70 - iv_rank * 0.5
+        else:
+            scores['volatility_score'] = 50
+
+        # 3. Momentum Score
+        price_momentum = option_data.get('price_momentum', 0)
+        scores['momentum_score'] = 50 + (price_momentum * 100)
+
+        # 4. Market Structure Score
+        unusual_volume = option_data.get('unusual_call_volume', False)
+        scores['structure_score'] = 70 if unusual_volume else 50
+
+        # 5. Sentiment Score (if available from AI)
+        sentiment = option_data.get('sentiment_score', 0)
+        scores['sentiment_score'] = 50 + (sentiment * 50)
+
+        # Weight based on market regime
+        regime = market_context.get('regime', 'normal')
+        if regime == 'strong_uptrend':
+            weights = {
+                'math_score': 0.20,
+                'volatility_score': 0.15,
+                'momentum_score': 0.35,  # Momentum matters most
+                'structure_score': 0.20,
+                'sentiment_score': 0.10
+            }
+        elif regime == 'high_fear':
+            weights = {
+                'math_score': 0.40,  # Math matters most in volatility
+                'volatility_score': 0.25,
+                'momentum_score': 0.10,
+                'structure_score': 0.15,
+                'sentiment_score': 0.10
+            }
+        else:  # Normal/balanced
+            weights = {
+                'math_score': 0.25,
+                'volatility_score': 0.20,
+                'momentum_score': 0.20,
+                'structure_score': 0.20,
+                'sentiment_score': 0.15
+            }
+
+        # Calculate weighted composite
+        composite = sum(scores[k] * weights[k] for k in scores)
+
+        return {
+            'composite_score': composite,
+            'component_scores': scores,
+            'weights_used': weights,
+            'regime_adjusted': True
+        }
+
+# Initialize senior analyst components
+market_regime_detector = MarketRegimeDetector()
+threshold_manager = DynamicThresholdManager()
+pattern_matcher = PatternMatcher()
+enhanced_scoring = EnhancedScoring()
+
+# ============================================================================
+# AI ENHANCEMENT FUNCTIONS - Add intelligence layer to existing analysis
+# ============================================================================
+
+async def enhance_option_with_ai(
+    option_data: Dict[str, Any],
+    market_context: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """Enhance option analysis with AI intelligence"""
+
+    # If AI is not enabled, return original data unchanged
+    if not AI_ENABLED:
+        return option_data
+
+    symbol = option_data.get('symbol', 'UNKNOWN')
+    strike = option_data.get('strike', 0)
+    expiration = option_data.get('expiration', 'N/A')
+
+    try:
+        # Prepare AI enhancement tasks
+        ai_tasks = {}
+
+        # 1. Perplexity: Real-time market context
+        if perplexity_client.enabled:
+            query = f"{symbol} stock options analysis {strike} strike recent news catalysts unusual activity {datetime.now().strftime('%Y-%m-%d')}"
+            ai_tasks['perplexity'] = perplexity_client.search(query)
+
+        # 2. Serper: Check for unusual options activity
+        if serper_client.enabled:
+            query = f"{symbol} unusual options activity call volume {strike} strike institutional flow"
+            ai_tasks['serper'] = serper_client.search(query, num_results=5)
+
+        # 3. LLM: Synthesize analysis
+        if llm_client.enabled:
+            prompt = f"""
+            Analyze this option opportunity:
+            Symbol: {symbol}
+            Strike: ${strike}
+            Expiration: {expiration}
+            ITM Probability: {option_data.get('itm_probability', 0):.2%}
+            Profit Potential: {option_data.get('profit_potential', 0):.2%}
+            Current Greeks: Delta={option_data.get('delta', 0):.3f}, Gamma={option_data.get('gamma', 0):.3f}
+            Market Regime: {market_context.get('regime', 'unknown') if market_context else 'unknown'}
+
+            Provide:
+            1. Conviction score (1-10)
+            2. Key insight (1 sentence)
+            3. Main risk factor
+            4. Optimal entry point
+            5. Smart money positioning if detectable
+            """
+            ai_tasks['llm'] = llm_client.analyze(prompt, {'option': option_data, 'market': market_context})
+
+        # Run all AI tasks concurrently
+        results = {}
+        for key, task in ai_tasks.items():
+            try:
+                results[key] = await task
+            except Exception as e:
+                logger.warning(f"AI task {key} failed for {symbol}: {e}")
+                results[key] = None
+
+        # Parse and integrate AI insights
+        ai_insights = {
+            'enhanced': True,
+            'conviction_score': 5,  # Default
+            'key_insight': None,
+            'risk_factors': [],
+            'entry_guidance': None,
+            'smart_money': None,
+            'unusual_activity': False
+        }
+
+        # Process Perplexity results
+        if results.get('perplexity') and results['perplexity'].get('success'):
+            answer = results['perplexity'].get('answer', '')
+            if 'bullish' in answer.lower() or 'call buying' in answer.lower():
+                ai_insights['conviction_score'] += 1
+            if 'bearish' in answer.lower() or 'concern' in answer.lower():
+                ai_insights['conviction_score'] -= 1
+            if 'unusual' in answer.lower() or 'institutional' in answer.lower():
+                ai_insights['unusual_activity'] = True
+
+        # Process Serper results
+        if results.get('serper') and results['serper'].get('success'):
+            organic = results['serper'].get('organic', [])
+            for result in organic[:3]:
+                snippet = result.get('snippet', '').lower()
+                if 'unusual call' in snippet or 'sweep' in snippet:
+                    ai_insights['unusual_activity'] = True
+                    ai_insights['smart_money'] = 'Unusual call activity detected'
+                    break
+
+        # Process LLM analysis
+        if results.get('llm') and results['llm'].get('success'):
+            analysis = results['llm'].get('analysis', '')
+            lines = analysis.split('\n')
+            for line in lines:
+                line_lower = line.lower()
+                if 'conviction' in line_lower or 'score' in line_lower:
+                    # Extract conviction score
+                    import re
+                    numbers = re.findall(r'\d+', line)
+                    if numbers:
+                        ai_insights['conviction_score'] = min(10, max(1, int(numbers[0])))
+                elif 'insight' in line_lower or 'key' in line_lower:
+                    ai_insights['key_insight'] = line.split(':', 1)[-1].strip()
+                elif 'risk' in line_lower:
+                    ai_insights['risk_factors'].append(line.split(':', 1)[-1].strip())
+                elif 'entry' in line_lower or 'optimal' in line_lower:
+                    ai_insights['entry_guidance'] = line.split(':', 1)[-1].strip()
+                elif 'smart money' in line_lower or 'institutional' in line_lower:
+                    ai_insights['smart_money'] = line.split(':', 1)[-1].strip()
+
+        # Add AI insights to option data
+        option_data['ai_insights'] = ai_insights
+
+        # Adjust composite score based on AI conviction
+        if 'composite_score' in option_data:
+            ai_multiplier = 0.8 + (ai_insights['conviction_score'] / 10) * 0.4  # 0.8 to 1.2
+            option_data['ai_adjusted_score'] = option_data['composite_score'] * ai_multiplier
+        else:
+            option_data['ai_adjusted_score'] = ai_insights['conviction_score'] * 10
+
+        return option_data
+
+    except Exception as e:
+        logger.error(f"AI enhancement failed for {symbol}: {e}")
+        # Return original data on error
+        return option_data
+
+async def get_ai_market_intelligence() -> Dict[str, Any]:
+    """Get overall market intelligence from AI"""
+
+    if not AI_ENABLED:
+        return {"available": False}
+
+    try:
+        intelligence = {
+            "available": True,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Get market overview from Perplexity
+        if perplexity_client.enabled:
+            market_query = f"Stock market options unusual activity major moves {datetime.now().strftime('%Y-%m-%d')} SPY VIX sentiment"
+            market_result = await perplexity_client.search(market_query)
+            if market_result.get('success'):
+                intelligence['market_summary'] = market_result.get('answer', '')
+
+        # Get trending options from Serper
+        if serper_client.enabled:
+            trending_query = "most active stock options unusual volume today call sweep"
+            trending_result = await serper_client.search(trending_query, num_results=10)
+            if trending_result.get('success'):
+                trending_symbols = set()
+                for result in trending_result.get('organic', []):
+                    # Extract symbols from snippets (basic pattern matching)
+                    import re
+                    symbols = re.findall(r'\b[A-Z]{2,5}\b', result.get('snippet', ''))
+                    trending_symbols.update(symbols)
+                intelligence['trending_options'] = list(trending_symbols)[:10]
+
+        return intelligence
+
+    except Exception as e:
+        logger.error(f"Market intelligence failed: {e}")
+        return {"available": False, "error": str(e)}
+
 # Slack imports already done above
 
 
@@ -97,6 +723,15 @@ ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
 FRED_API_KEY = os.getenv('FRED_API_KEY')
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
+# AI Enhancement API Keys (Optional - graceful fallback if not present)
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
+SERPER_API_KEY = os.getenv('SERPER_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
+# Check if AI features are enabled
+AI_ENABLED = bool(PERPLEXITY_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY)
+
 # Slack Tokens
 SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
 SLACK_APP_TOKEN = os.getenv('SLACK_APP_TOKEN')
@@ -109,6 +744,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("montecarlo-unified")
 
+# Initialize AI clients after configuration
+perplexity_client = PerplexityClient()
+serper_client = SerperClient()
+llm_client = LLMClient()
+
+# Log AI status
+if AI_ENABLED:
+    logger.info(f"🧠 AI Features ENABLED - Perplexity: {perplexity_client.enabled}, Serper: {serper_client.enabled}, LLM: {llm_client.provider or 'None'}")
+else:
+    logger.info("🔢 Running in Math-Only Mode (No AI keys configured)")
 
 # ============================================================================
 # GLOBAL STATE
@@ -126,12 +771,7 @@ PRICE_CHECK_INTERVAL = 60  # 1 minute for price/Greeks
 NEWS_CHECK_INTERVAL = 43200  # 12 hours for news/sentiment
 last_news_check = {}
 
-# Fortune 500 symbols
-FORTUNE_500_SYMBOLS = [
-    'AAPL', 'MSFT', 'AMZN', 'NVDA', 'GOOGL', 'META', 'TSLA', 'BRK-B', 'V', 'JNJ',
-    'WMT', 'JPM', 'PG', 'MA', 'UNH', 'DIS', 'HD', 'PYPL', 'BAC', 'CMCSA',
-    'NFLX', 'ADBE', 'CRM', 'PFE', 'TMO', 'ABBV', 'NKE', 'PEP', 'KO', 'ABT'
-]
+# Fortune 500 symbols (will use comprehensive list below)
 
 
 # ============================================================================
@@ -1971,8 +2611,33 @@ async def find_optimal_risk_reward_options(
         if isinstance(symbol_results, list):
             all_options.extend(symbol_results)
 
-    # Sort by composite score (descending) and return top results
-    all_options.sort(key=lambda x: x['composite_score'], reverse=True)
+    # Enhance top options with AI if enabled
+    if AI_ENABLED and all_options:
+        logger.info("Enhancing top options with AI intelligence...")
+
+        # Get current market regime for AI context
+        current_regime = await market_regime_detector.get_current_regime()
+
+        # Enhance top options with AI (limit for performance)
+        options_to_enhance = all_options[:min(20, len(all_options))]
+        enhanced_options = []
+
+        for option in options_to_enhance:
+            enhanced_option = await enhance_option_with_ai(option, current_regime)
+            enhanced_options.append(enhanced_option)
+
+        # Replace top options with enhanced versions
+        all_options[:len(enhanced_options)] = enhanced_options
+
+        # Re-sort by AI-adjusted score if available
+        all_options.sort(
+            key=lambda x: x.get('ai_adjusted_score', x['composite_score']),
+            reverse=True
+        )
+
+    else:
+        # Sort by composite score (descending) without AI
+        all_options.sort(key=lambda x: x['composite_score'], reverse=True)
 
     # Add ranking
     for i, option in enumerate(all_options[:max_results], 1):
@@ -4788,19 +5453,21 @@ async def _handle_smart_picks_internal(message, say):
         text = message['text']
         logger.info(f"Received Smart Picks command: {text}")
 
-        await say(f"🧠 **Smart Picks Analysis Starting...**\n🔍 Finding optimal risk/reward options ≤30 days using advanced techniques...\n⏳ This may take 30-60 seconds to analyze all Fortune 500 options.")
+        # Show AI status if enabled
+        if AI_ENABLED:
+            await say(f"🧠 **Smart Picks Analysis Starting (AI Enhanced)**\n🔍 Finding optimal options with institutional intelligence...\n⏳ This may take 30-60 seconds.")
+        else:
+            await say(f"🔢 **Smart Picks Analysis Starting**\n🔍 Finding optimal options using mathematical analysis...\n⏳ This may take 30-60 seconds.")
 
-        # Call ENHANCED MCP tool for Smart Picks analysis
-        result = await call_mcp_tool(
-            'smart_picks_optimal_options_enhanced',
-            {
-                'max_days_to_expiry': 30,
-                'target_profit_potential': 0.15,  # 15% target profit potential (adaptive)
-                'target_probability': 0.45,       # 45% target ITM probability (adaptive)
-                'target_risk_level': 6,           # Medium risk tolerance (adaptive)
-                'max_results': 8,                 # Top 8 picks
-                'always_show_results': True       # Always show best available options
-            }
+        # Call the function directly (no MCP)
+        result = await find_optimal_risk_reward_options_enhanced(
+            symbols=FORTUNE_500_SYMBOLS[:50],  # Limit for performance
+            max_days_to_expiry=30,
+            target_profit_potential=0.15,
+            target_probability=0.45,
+            target_risk_level=6,
+            max_results=8,
+            always_show_results=True
         )
 
         if result and result.get('success'):
@@ -4840,9 +5507,15 @@ async def _handle_smart_picks_internal(message, say):
                     category = opt.get('category', 'acceptable')
                     category_emoji = "🎯" if category == "ideal" else "📈" if category == "adapted" else "⚖️"
 
-                    response += f"\n{i}. **{opt['symbol']} ${opt['strike']} Call** {category_emoji} (Exp: {opt['expiration']})\n"
-                    response += f"   • **Enhanced Score: {opt['composite_score']:.4f}** (Higher = Better)\n"
-                    response += f"   • **ITM Probability: {opt['itm_probability']:.1%}**"
+                    response += f"\n{i}. **{opt['symbol']} ${opt.get('strike', 0)} Call** {category_emoji} (Exp: {opt.get('expiration', 'N/A')})\n"
+
+                    # Show AI-adjusted score if available
+                    if opt.get('ai_adjusted_score'):
+                        response += f"   • **AI Score: {opt['ai_adjusted_score']:.1f}** | Math Score: {opt.get('composite_score', 0):.1f}\n"
+                    else:
+                        response += f"   • **Score: {opt.get('composite_score', 0):.1f}**\n"
+
+                    response += f"   • **ITM Probability: {opt.get('itm_probability', 0):.1%}**"
 
                     # Show sentiment adjustment if significant
                     sentiment_adj = opt.get('sentiment_adjustment', 0)
@@ -4854,7 +5527,7 @@ async def _handle_smart_picks_internal(message, say):
                     response += f"   • **Risk Level: {opt['risk_level']:.1f}/10**\n"
                     response += f"   • **Days to Expiry: {opt['days_to_expiration']}**\n"
                     response += f"   • **Option Price: ${opt['option_price']:.2f}**\n"
-                    response += f"   • **Volume: {opt['volume']:,}**"
+                    response += f"   • **Volume: {opt.get('volume', 0):,}**"
 
                     # Show flow sentiment if available
                     flow_data = opt.get('flow_data', {})
@@ -4864,6 +5537,22 @@ async def _handle_smart_picks_internal(message, say):
                             flow_emoji = "🟢" if flow_sentiment == 'bullish' else "🔴"
                             response += f" | Flow: {flow_emoji}{flow_sentiment.title()}"
                     response += "\n"
+
+                    # Show AI insights if available
+                    if AI_ENABLED and opt.get('ai_insights'):
+                        ai = opt['ai_insights']
+                        if ai.get('conviction_score'):
+                            response += f"   \n   🧠 **AI Analysis:**\n"
+                            response += f"   • Conviction: **{ai['conviction_score']}/10**"
+                            if ai.get('unusual_activity'):
+                                response += " 🔥 Unusual Activity"
+                            response += "\n"
+                            if ai.get('key_insight'):
+                                response += f"   • Insight: {ai['key_insight']}\n"
+                            if ai.get('entry_guidance'):
+                                response += f"   • Entry: {ai['entry_guidance']}\n"
+                            if ai.get('smart_money'):
+                                response += f"   • Smart Money: {ai['smart_money']}\n"
 
                 if len(optimal_options) > 6:
                     response += f"\n... and {len(optimal_options) - 6} more options\n"
