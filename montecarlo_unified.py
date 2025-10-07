@@ -5615,14 +5615,11 @@ def setup_message_handlers(app):
 
             await say(f"Analyzing {symbol} ${strike} call... Please wait.")
 
-            # Call MCP tool for real-time analysis
-            result = await call_mcp_tool(
-                'analyze_option_realtime',
-                {
-                    'symbol': symbol,
-                    'strike': strike,
-                    'expiration_date': '2025-10-17'  # Default expiration
-                }
+            # Analyze option directly
+            result = await analyze_option_realtime(
+                symbol=symbol,
+                strike=strike,
+                expiration_date='2025-10-17'  # Default expiration
             )
 
             if result and result.get('success'):
@@ -5720,14 +5717,14 @@ def setup_message_handlers(app):
 
         # Monitoring control commands
         elif any(word in text for word in ['cancel', 'stop', 'stop monitoring']):
-            result = await call_mcp_tool('stop_continuous_monitoring', {})
+            result = await stop_continuous_monitoring()
             if result and result.get('success'):
                 await say("🛑 **Monitoring Stopped**\n\nAll position monitoring has been stopped. You will no longer receive sell alerts.")
             else:
                 await say("❌ Error stopping monitoring. Please try again.")
 
         elif any(word in text for word in ['status', 'monitoring status', 'positions']):
-            result = await call_mcp_tool('list_selected_options', {})
+            result = await list_selected_options()
             if result and result.get('success'):
                 data = result['data']
                 if data.get('selected_options'):
@@ -5762,7 +5759,7 @@ def setup_message_handlers(app):
 
         # Start monitoring command
         elif any(word in text for word in ['start monitoring', 'resume monitoring']):
-            result = await call_mcp_tool('start_continuous_monitoring', {})
+            result = await start_continuous_monitoring()
             if result and result.get('success'):
                 await say("✅ **Monitoring Started**\n\nContinuous monitoring is now active. You'll receive sell alerts when profit targets are hit!")
             else:
@@ -5783,14 +5780,11 @@ def setup_message_handlers(app):
 
             await say(f"Marking {symbol} ${strike} as sold and stopping alerts...")
 
-            # Call MCP tool to mark as sold
-            result = await call_mcp_tool(
-                'mark_option_sold',
-                {
-                    'symbol': symbol,
-                    'strike': strike,
-                    'expiration_date': '2025-10-17'  # Default - will find any matching
-                }
+            # Mark option as sold directly
+            result = await mark_option_sold(
+                symbol=symbol,
+                strike=strike,
+                expiration_date='2025-10-17'  # Default - will find any matching
             )
 
             if result and result.get('success'):
@@ -5803,38 +5797,6 @@ def setup_message_handlers(app):
         # Default response
         else:
             await say("I didn't understand that command. Type `help` to see available commands or try:\n- `Pick TSLA $430` (analyze & monitor)\n- `Smart Picks` (find opportunities)\n- `Status` (check positions)\n- `Sold TSLA $430` (mark as sold)\n- `Stop` (stop monitoring)")
-
-async def main():
-    """Start the Slack App."""
-    if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
-        logger.error("Missing Slack tokens. Please set SLACK_BOT_TOKEN and SLACK_APP_TOKEN in environment variables")
-        logger.error(f"SLACK_BOT_TOKEN present: {'Yes' if SLACK_BOT_TOKEN else 'No'}")
-        logger.error(f"SLACK_APP_TOKEN present: {'Yes' if SLACK_APP_TOKEN else 'No'}")
-        return
-
-    # Start MCP connection as background task
-    logger.info("🔌 Starting MCP connection to stockflow.py...")
-    asyncio.create_task(maintain_mcp_connection())
-
-    # Wait longer for MCP to connect and be ready
-    logger.info("⏳ Waiting for MCP server to initialize...")
-    await asyncio.sleep(10)  # Give stockflow.py time to fully start
-
-    # Initialize Slack App with tokens
-    logger.info("🔧 Initializing Monte Carlo Slack App...")
-    app = AsyncApp(token=SLACK_BOT_TOKEN)
-
-    # Register all message handlers
-    setup_message_handlers(app)
-
-    handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
-    logger.info("🚀 Starting Monte Carlo Slack App...")
-    logger.info("Ready to receive messages!")
-    logger.info("Try: 'Smart Picks' or 'Pick TSLA $430'")
-
-    await handler.start_async()
-
-
 
 # ============================================================================
 # MAIN APPLICATION
