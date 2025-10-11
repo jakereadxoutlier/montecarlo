@@ -6,7 +6,6 @@ No MCP, no inter-process communication, just one file
 
 import logging
 import asyncio
-import yfinance as yf
 import json
 import traceback
 import pandas as pd
@@ -30,65 +29,6 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.errors import SlackApiError
 import dotenv
 # Advanced engine defined below
-
-# ============================================================================
-# RATE LIMITING AND CONNECTION MANAGEMENT FOR YFINANCE
-# ============================================================================
-
-# Configure yfinance to handle rate limiting better
-import urllib3
-from urllib3.util import Retry
-from requests.adapters import HTTPAdapter
-
-# Increase connection pool size for yfinance
-session = requests.Session()
-session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-
-# Configure retry strategy with exponential backoff
-retry_strategy = Retry(
-    total=3,
-    backoff_factor=1,
-    status_forcelist=[429, 500, 502, 503, 504],
-)
-
-adapter = HTTPAdapter(
-    max_retries=retry_strategy,
-    pool_connections=50,  # Increased from default 10
-    pool_maxsize=100,     # Increased from default 10
-)
-
-session.mount("http://", adapter)
-session.mount("https://", adapter)
-
-# Apply session to yfinance
-yf.utils.get_session = lambda: session
-
-# Rate limiting configuration - MORE AGGRESSIVE
-CONCURRENT_REQUESTS = 2  # Reduced from 5 to 2 concurrent requests
-REQUEST_DELAY = 1.0      # Increased from 0.5 to 1.0 second
-rate_limit_semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
-
-async def rate_limited_ticker(symbol: str, retries: int = 3) -> yf.Ticker:
-    """Create a yfinance Ticker with rate limiting and retry logic"""
-    async with rate_limit_semaphore:
-        for attempt in range(retries):
-            try:
-                await asyncio.sleep(REQUEST_DELAY)
-                loop = asyncio.get_event_loop()
-                ticker = await loop.run_in_executor(None, yf.Ticker, symbol)
-
-                # Test if ticker is valid by checking info
-                info = await loop.run_in_executor(None, lambda: ticker.info)
-                if info and (info.get('regularMarketPrice') or info.get('currentPrice')):
-                    return ticker
-
-            except Exception as e:
-                if attempt == retries - 1:
-                    logger.warning(f"Failed to get ticker {symbol} after {retries} attempts: {e}")
-                    raise
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
-
-        raise ValueError(f"Unable to get valid ticker for {symbol}")
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -528,37 +468,35 @@ class MarketRegimeDetector:
 
     @staticmethod
     async def get_current_regime() -> Dict[str, Any]:
-        """Identify current market behavior pattern"""
+        """Identify current market behavior pattern using Polygon.io"""
         try:
-            # Get SPY and VIX data
-            spy = yf.Ticker("SPY")
-            vix = yf.Ticker("^VIX")
+            # Get VIX data from Polygon.io (simplified version without historical data)
+            vix_quote = await polygon_client.get_quote(["VIX"])
 
-            spy_hist = spy.history(period="1mo")
-            vix_info = vix.info
+            if not vix_quote or "VIX" not in vix_quote:
+                # Default regime if VIX unavailable
+                return {
+                    "regime": "normal",
+                    "characteristics": "Balanced market, standard strategies apply",
+                    "vix": 20,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
 
-            # Calculate regime indicators
-            spy_returns = spy_hist['Close'].pct_change().dropna()
-            volatility = spy_returns.std() * np.sqrt(252)  # Annualized
-            trend = (spy_hist['Close'][-1] / spy_hist['Close'][-20] - 1) if len(spy_hist) >= 20 else 0
-            vix_level = vix_info.get('regularMarketPrice', 20)
+            vix_level = vix_quote["VIX"].get('price', 20)
 
-            # Determine regime
-            if vix_level < 15 and volatility < 0.12:
+            # Determine regime based on VIX level (simplified without historical data)
+            if vix_level < 15:
                 regime = "low_vol_grind"
-                characteristics = "Steady uptrend, sell puts/call spreads work well"
+                characteristics = "Low volatility, steady market conditions"
             elif vix_level > 30:
                 regime = "high_fear"
                 characteristics = "Extreme volatility, be selective, size down"
-            elif trend > 0.05 and vix_level < 20:
-                regime = "strong_uptrend"
-                characteristics = "Momentum plays work, buy calls on dips"
-            elif trend < -0.05 and vix_level > 25:
-                regime = "correction"
-                characteristics = "Defensive mode, wait for stabilization"
-            elif abs(trend) < 0.02 and 18 < vix_level < 25:
-                regime = "choppy_sideways"
-                characteristics = "Range-bound, iron condors and butterflies"
+            elif vix_level > 25:
+                regime = "elevated_vol"
+                characteristics = "Elevated volatility, defensive positioning"
+            elif 18 < vix_level < 25:
+                regime = "normal"
+                characteristics = "Balanced market, standard strategies apply"
             else:
                 regime = "normal"
                 characteristics = "Balanced market, standard strategies apply"
@@ -567,9 +505,7 @@ class MarketRegimeDetector:
                 "regime": regime,
                 "characteristics": characteristics,
                 "vix": vix_level,
-                "spy_trend": trend,
-                "volatility": volatility,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.datetime.now().isoformat()
             }
 
         except Exception as e:
@@ -641,7 +577,11 @@ class PatternMatcher:
         symbol: str,
         current_setup: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Find historical patterns similar to current setup"""
+        """Find historical patterns similar to current setup - Feature disabled (requires yfinance)"""
+        # Disabled - historical data analysis not available via Polygon.io Options Starter
+        logger.debug(f"Historical pattern matching disabled for {symbol}")
+        return {"error": "Historical pattern analysis disabled", "best_match": {"confidence": 0.5}}
+
         try:
             ticker = await rate_limited_ticker(symbol)
             hist = ticker.history(period="2y")  # 2 years of data
@@ -977,8 +917,8 @@ class PolygonClient:
     async def get_quote(self, symbols: List[str]) -> Dict[str, Any]:
         """Get quotes for multiple symbols (15-min delayed)"""
         if not self.enabled:
-            logger.warning("Polygon.io not configured, using yfinance")
-            return await self._fallback_yfinance_quotes(symbols)
+            logger.error("Polygon.io not configured - API key required")
+            return {}
 
         quotes = {}
         for symbol in symbols:
@@ -1017,7 +957,8 @@ class PolygonClient:
         Uses Options Chain Snapshot endpoint
         """
         if not self.enabled:
-            return await self._fallback_yfinance_options(symbol, expiration)
+            logger.error("Polygon.io not configured - API key required")
+            return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
 
         try:
             # Format expiration date for Polygon (YYYY-MM-DD)
@@ -1072,17 +1013,18 @@ class PolygonClient:
                             'puts': pd.DataFrame(puts) if puts else pd.DataFrame()
                         }
                     else:
-                        logger.warning(f"Polygon options error {response.status}, using yfinance fallback")
-                        return await self._fallback_yfinance_options(symbol, expiration)
+                        logger.error(f"Polygon options error {response.status}")
+                        return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
 
         except Exception as e:
             logger.error(f"Polygon options fetch error: {e}")
-            return await self._fallback_yfinance_options(symbol, expiration)
+            return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
 
     async def get_expirations(self, symbol: str) -> List[str]:
         """Get available expiration dates for a symbol"""
         if not self.enabled:
-            return await self._fallback_yfinance_expirations(symbol)
+            logger.error("Polygon.io not configured - API key required")
+            return []
 
         try:
             # Polygon has a dedicated expirations endpoint
@@ -1108,11 +1050,12 @@ class PolygonClient:
 
                         return expirations
                     else:
-                        return await self._fallback_yfinance_expirations(symbol)
+                        logger.error(f"Polygon expirations error {response.status}")
+                        return []
 
         except Exception as e:
             logger.error(f"Error getting expirations: {e}")
-            return await self._fallback_yfinance_expirations(symbol)
+            return []
 
     async def cache_eod_snapshot(self, symbols: List[str]):
         """Cache end-of-day snapshot for after-hours analysis"""
@@ -1156,43 +1099,6 @@ class PolygonClient:
 
         return {}
 
-    async def _fallback_yfinance_quotes(self, symbols: List[str]) -> Dict[str, Any]:
-        """Fallback to yfinance if Alpha Vantage fails"""
-        quotes = {}
-        for symbol in symbols:
-            try:
-                ticker = await rate_limited_ticker(symbol)
-                info = ticker.info
-                quotes[symbol] = {
-                    'price': info.get('regularMarketPrice', info.get('currentPrice', 0)),
-                    'volume': info.get('volume', 0),
-                }
-            except Exception as e:
-                logger.warning(f"yfinance fallback failed for {symbol}: {e}")
-        return quotes
-
-    async def _fallback_yfinance_options(self, symbol: str, expiration: str) -> Dict[str, Any]:
-        """Fallback to yfinance for options"""
-        try:
-            ticker = await rate_limited_ticker(symbol)
-            options_chain = ticker.option_chain(expiration)
-            return {
-                'calls': options_chain.calls,
-                'puts': options_chain.puts
-            }
-        except Exception as e:
-            logger.error(f"yfinance options fallback failed: {e}")
-            return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
-
-    async def _fallback_yfinance_expirations(self, symbol: str) -> List[str]:
-        """Fallback to yfinance for expirations"""
-        try:
-            ticker = await rate_limited_ticker(symbol)
-            return list(ticker.options)
-        except Exception as e:
-            logger.error(f"yfinance expirations fallback failed: {e}")
-            return []
-
 # Use Polygon.io (user has $29/month Options Starter subscription)
 polygon_client = PolygonClient()
 
@@ -1211,7 +1117,7 @@ if polygon_client.enabled:
     logger.info(f"💰 Polygon.io Options Starter ENABLED - Unlimited calls, Greeks & IV included")
     logger.info(f"📊 15-minute delayed data (perfect for swing trading)")
 else:
-    logger.info(f"⚠️  Polygon.io DISABLED - Using yfinance fallback (rate limits may apply)")
+    logger.error("❌ Polygon.io DISABLED - API key required for bot to function")
 
 # ============================================================================
 # GLOBAL STATE
@@ -1299,55 +1205,9 @@ async def fetch_fred_data(series_id: str, limit: int = 100) -> dict:
         return {"observations": []}
 
 async def get_insider_trading_data(symbol: str) -> Dict[str, Any]:
-    """Get insider trading data - CRITICAL FOR PREDICTING MOVES."""
-    try:
-        # Use yfinance insider data since Alpha Vantage insider data requires higher tier
-        ticker = await rate_limited_ticker(symbol)
-
-        # Get recent insider transactions
-        try:
-            insider_data = ticker.insider_transactions
-            if insider_data is not None and not insider_data.empty:
-                recent_trades = []
-
-                for index, trade in insider_data.head(10).iterrows():  # Last 10 trades
-                    trade_type = 'BUY' if 'Purchase' in str(trade.get('Transaction', '')) else 'SELL'
-
-                    recent_trades.append({
-                        'date': str(trade.get('Date', '')),
-                        'type': trade_type,
-                        'shares': int(trade.get('Shares', 0)) if pd.notna(trade.get('Shares')) else 0,
-                        'value': float(trade.get('Value', 0)) if pd.notna(trade.get('Value')) else 0,
-                        'insider_name': str(trade.get('Insider', '')),
-                        'title': str(trade.get('Title', ''))
-                    })
-
-                # Calculate insider sentiment
-                recent_buys = [t for t in recent_trades if t['type'] == 'BUY']
-                recent_sells = [t for t in recent_trades if t['type'] == 'SELL']
-
-                insider_sentiment = 0.0
-                if recent_buys or recent_sells:
-                    buy_value = sum(t['value'] for t in recent_buys)
-                    sell_value = sum(t['value'] for t in recent_sells)
-                    total_value = buy_value + sell_value
-
-                    if total_value > 0:
-                        insider_sentiment = (buy_value - sell_value) / total_value
-
-                return {
-                    'insider_trades': recent_trades,
-                    'insider_sentiment': insider_sentiment,
-                    'net_insider_activity': len(recent_buys) - len(recent_sells),
-                    'confidence': min(len(recent_trades) / 5, 1.0),
-                    'bullish_insider_activity': insider_sentiment > 0.2
-                }
-        except:
-            pass
-
-    except Exception as e:
-        logger.warning(f"Insider trading data unavailable for {symbol}: {e}")
-
+    """Get insider trading data - Feature disabled (requires yfinance)."""
+    # Disabled - insider data not available via Polygon.io Options Starter
+    logger.debug(f"Insider trading feature disabled for {symbol}")
     return {
         'insider_trades': [],
         'insider_sentiment': 0.0,
@@ -1357,110 +1217,30 @@ async def get_insider_trading_data(symbol: str) -> Dict[str, Any]:
     }
 
 async def get_options_gamma_squeeze_probability(symbol: str, current_price: float) -> Dict[str, Any]:
-    """Calculate gamma squeeze probability - CRITICAL FOR EXPLOSIVE MOVES."""
-    try:
-        ticker = await rate_limited_ticker(symbol)
-
-        squeeze_indicators = {
-            'gamma_exposure': 0.0,
-            'call_wall': current_price,
-            'put_wall': current_price,
-            'squeeze_probability': 0.0,
-            'max_pain': current_price,
-            'high_gamma_risk': False
-        }
-
-        options_dates = ticker.options
-        if not options_dates:
-            return squeeze_indicators
-
-        # Analyze next expiration for gamma exposure
-        try:
-            options = ticker.option_chain(options_dates[0])
-            calls = options.calls
-            puts = options.puts
-
-            # Find strikes with highest open interest
-            call_oi_by_strike = {}
-            put_oi_by_strike = {}
-
-            for _, call in calls.iterrows():
-                strike = call['strike']
-                oi = call.get('openInterest', 0) or 0
-                if oi > 0 and abs(strike - current_price) / current_price < 0.10:  # Within 10%
-                    call_oi_by_strike[strike] = oi
-
-            for _, put in puts.iterrows():
-                strike = put['strike']
-                oi = put.get('openInterest', 0) or 0
-                if oi > 0 and abs(strike - current_price) / current_price < 0.10:  # Within 10%
-                    put_oi_by_strike[strike] = oi
-
-            # Find major walls
-            if call_oi_by_strike:
-                max_call_strike = max(call_oi_by_strike.keys(), key=lambda k: call_oi_by_strike[k])
-                squeeze_indicators['call_wall'] = max_call_strike
-                max_call_oi = call_oi_by_strike[max_call_strike]
-
-                # High gamma risk if major call wall above current price with high OI
-                if max_call_strike > current_price and max_call_oi > 10000:
-                    squeeze_indicators['high_gamma_risk'] = True
-                    squeeze_indicators['squeeze_probability'] = min(max_call_oi / 50000, 0.8)
-
-            if put_oi_by_strike:
-                max_put_strike = max(put_oi_by_strike.keys(), key=lambda k: put_oi_by_strike[k])
-                squeeze_indicators['put_wall'] = max_put_strike
-
-        except Exception as e:
-            logger.warning(f"Gamma analysis failed for {symbol}: {e}")
-
-        return squeeze_indicators
-
-    except Exception as e:
-        logger.error(f"Gamma squeeze calculation failed for {symbol}: {e}")
-        return {
-            'gamma_exposure': 0.0,
-            'call_wall': current_price,
-            'put_wall': current_price,
-            'squeeze_probability': 0.0,
-            'max_pain': current_price,
-            'high_gamma_risk': False
-        }
+    """Calculate gamma squeeze probability - Feature disabled (requires yfinance)."""
+    # Disabled - detailed options analysis not available via Polygon.io Options Starter
+    logger.debug(f"Gamma squeeze feature disabled for {symbol}")
+    return {
+        'gamma_exposure': 0.0,
+        'call_wall': current_price,
+        'put_wall': current_price,
+        'squeeze_probability': 0.0,
+        'max_pain': current_price,
+        'high_gamma_risk': False
+    }
 
 async def get_short_interest_data(symbol: str) -> Dict[str, Any]:
-    """Get short interest - HIGH SHORT INTEREST = SQUEEZE POTENTIAL."""
-    try:
-        ticker = await rate_limited_ticker(symbol)
-        info = ticker.info
-
-        short_ratio = info.get('shortRatio', 0) or 0
-        short_percent_float = info.get('shortPercentOfFloat', 0) or 0
-        shares_short = info.get('sharesShort', 0) or 0
-
-        # Calculate squeeze potential
-        squeeze_potential = 0.0
-        if short_percent_float > 0.15:  # 15%+ short interest
-            squeeze_potential = min(short_percent_float * 3, 1.0)  # Max 100%
-
-        return {
-            'short_ratio': short_ratio,
-            'short_percent_float': short_percent_float * 100,  # Convert to percentage
-            'shares_short': shares_short,
-            'squeeze_potential': squeeze_potential,
-            'high_short_interest': short_percent_float > 0.15,  # 15%+ is high
-            'days_to_cover': short_ratio
-        }
-
-    except Exception as e:
-        logger.warning(f"Short interest data unavailable for {symbol}: {e}")
-        return {
-            'short_ratio': 0,
-            'short_percent_float': 0,
-            'shares_short': 0,
-            'squeeze_potential': 0.0,
-            'high_short_interest': False,
-            'days_to_cover': 0
-        }
+    """Get short interest - Feature disabled (requires yfinance)."""
+    # Disabled - short interest data not available via Polygon.io Options Starter
+    logger.debug(f"Short interest feature disabled for {symbol}")
+    return {
+        'short_ratio': 0,
+        'short_percent_float': 0,
+        'shares_short': 0,
+        'squeeze_potential': 0.0,
+        'high_short_interest': False,
+        'days_to_cover': 0
+    }
 
 async def get_alpha_vantage_earnings_calendar() -> Dict[str, Any]:
     """Get earnings calendar from Alpha Vantage."""
@@ -1738,15 +1518,12 @@ def monte_carlo_itm_probability_enhanced(
 # Async data fetcher for multiple stocks
 async def fetch_multiple_stock_data(symbols: List[str], max_concurrent: int = 20) -> Dict[str, Any]:
     """
-    Fetch stock data for multiple symbols concurrently.
-
-    Args:
-        symbols: List of stock symbols
-        max_concurrent: Maximum concurrent requests
-
-    Returns:
-        Dictionary mapping symbols to their data
+    Fetch stock data for multiple symbols concurrently - Feature disabled (requires yfinance)
     """
+    # Disabled - use Polygon.io get_quote instead
+    logger.debug(f"fetch_multiple_stock_data disabled - use polygon_client.get_quote() instead")
+    return {}
+
     async def fetch_single_stock(symbol: str) -> tuple[str, Any]:
         try:
             # Use ThreadPoolExecutor for yfinance calls (it's not async)
@@ -2044,7 +1821,7 @@ async def fetch_x_trends(symbol: str) -> Dict[str, Any]:
 # Real-time Option Analysis Functions
 async def get_realtime_option_data(symbol: str, strike: float, expiration_date: str) -> Dict[str, Any]:
     """
-    Get real-time option data with 1-minute yfinance pulls.
+    Get real-time option data using Polygon.io (NO YFINANCE).
 
     Args:
         symbol: Stock ticker symbol
@@ -2055,19 +1832,24 @@ async def get_realtime_option_data(symbol: str, strike: float, expiration_date: 
         Dictionary with real-time option analysis
     """
     try:
-        ticker = await rate_limited_ticker(symbol)
+        # Use Polygon.io for quote
+        quotes = await polygon_client.get_quote([symbol])
 
-        # Get current stock price
-        info = ticker.info
-        current_price = info.get('regularMarketPrice') or info.get('currentPrice')
+        if not quotes or symbol not in quotes:
+            return {'error': f'Could not get current price for {symbol} from Polygon.io'}
 
-        if not current_price:
-            return {'error': f'Could not get current price for {symbol}'}
+        current_price = quotes[symbol]['price']
+        if not current_price or current_price == 0:
+            return {'error': f'Invalid price for {symbol}: {current_price}'}
 
-        # Get options chain for the specified expiration
+        # Get options chain from Polygon.io
         try:
-            options_chain = ticker.option_chain(expiration_date)
-            calls = options_chain.calls
+            options_data = await polygon_client.get_options_chain(symbol, expiration_date)
+
+            if 'calls' not in options_data or options_data['calls'].empty:
+                return {'error': f'No options data for {symbol} expiring {expiration_date}'}
+
+            calls = options_data['calls']
 
             # Find the specific option
             option_data = calls[calls['strike'] == strike]
@@ -2800,7 +2582,7 @@ def calculate_sentiment_boost(news_data: Dict[str, Any], trend_data: Dict[str, A
         return 0.0
 
 # Analyze OTM call options for multiple stocks
-async def analyze_otm_calls_batch(
+async def analyze_otm_calls_batch_DISABLED(
     symbols: List[str],
     expiration_date: str,
     min_volume: int = 100,
@@ -2975,7 +2757,7 @@ async def analyze_otm_calls_batch(
 
     return results[:10]
 
-async def find_optimal_risk_reward_options(
+async def find_optimal_risk_reward_options_OLD_DISABLED(
     symbols: List[str],
     max_days_to_expiry: int = 30,
     min_profit_potential: float = 0.15,
@@ -3548,15 +3330,8 @@ async def monitor_selected_options():
                         current_prices[symbol] = quote_data.get('price', 0)
                     logger.info(f"✅ Polygon.io: Got quotes for {len(current_prices)} symbols")
                 except Exception as e:
-                    logger.warning(f"Polygon.io failed, using fallback: {e}")
-                    # Fallback to yfinance if Tradier fails
-                    for symbol in symbols:
-                        try:
-                            ticker = await rate_limited_ticker(symbol)
-                            info = ticker.info
-                            current_prices[symbol] = info.get('regularMarketPrice') or info.get('currentPrice', 0)
-                        except Exception as ye:
-                            logger.warning(f"Fallback also failed for {symbol}: {ye}")
+                    logger.error(f"Polygon.io failed: {e}")
+                    # No fallback - Polygon.io is required
             else:
                 # AFTER HOURS: Use cached EOD data
                 for symbol in symbols:
@@ -3566,12 +3341,9 @@ async def monitor_selected_options():
                             current_prices[symbol] = cached['quote'].get('price', 0)
                             logger.debug(f"📦 Using cached EOD for {symbol}: ${current_prices[symbol]:.2f}")
                         else:
-                            # No cache, use yfinance as last resort
-                            ticker = await rate_limited_ticker(symbol)
-                            info = ticker.info
-                            current_prices[symbol] = info.get('regularMarketPrice') or info.get('currentPrice', 0)
+                            logger.warning(f"No cached data for {symbol} - skipping")
                     except Exception as e:
-                        logger.warning(f"Failed to get price for {symbol}: {e}")
+                        logger.warning(f"Failed to get cached price for {symbol}: {e}")
 
             # Calculate Greeks for all options
             for option_key, option_data in selected_options.items():
@@ -4483,9 +4255,12 @@ async def historical_pattern_recognition(
 
 async def event_driven_analysis(symbol: str, days_ahead: int = 30) -> Dict[str, Any]:
     """
-    Analyze upcoming events that could impact option prices.
-    This provides event-driven probability adjustments for earnings, FDA approvals, etc.
+    Event-driven analysis - Feature disabled (requires yfinance)
     """
+    # Disabled - event data not available via Polygon.io Options Starter
+    logger.debug(f"Event-driven analysis disabled for {symbol}")
+    return {"events_analysis": {symbol: {"composite_impact_score": 0.5}}}
+
     events = {}
     event_adjustments = {}
 
@@ -5334,21 +5109,23 @@ async def find_optimal_risk_reward_options_enhanced(
     async def analyze_symbol_enhanced(symbol: str) -> List[Dict[str, Any]]:
         symbol_options = []
         try:
-            # Use rate-limited ticker creation
-            ticker = await rate_limited_ticker(symbol)
-            loop = asyncio.get_event_loop()
-
-            options_dates = await loop.run_in_executor(None, lambda: ticker.options)
-            if not options_dates:
+            # Use Polygon.io for quote (NO YFINANCE)
+            quotes = await polygon_client.get_quote([symbol])
+            if not quotes or symbol not in quotes:
+                logger.warning(f"Could not get quote for {symbol} from Polygon.io")
                 return []
 
-            available_dates = [date for date in options_dates if date in valid_expirations]
+            current_price = quotes[symbol]['price']
+            if not current_price or current_price == 0:
+                return []
+
+            # Get available expirations from Polygon.io
+            all_expirations = await polygon_client.get_expirations(symbol)
+            if not all_expirations:
+                return []
+
+            available_dates = [date for date in all_expirations if date in valid_expirations]
             if not available_dates:
-                return []
-
-            info = await loop.run_in_executor(None, lambda: ticker.info)
-            current_price = info.get('regularMarketPrice') or info.get('currentPrice')
-            if not current_price:
                 return []
 
             # Get sentiment, flow, and correlation data for this symbol
@@ -5365,13 +5142,17 @@ async def find_optimal_risk_reward_options_enhanced(
                     if days_to_exp > max_days_to_expiry:
                         continue
 
-                    options = await loop.run_in_executor(None, ticker.option_chain, expiration_date)
-                    calls = options.calls
+                    # Get options chain from Polygon.io (NO YFINANCE)
+                    options_data = await polygon_client.get_options_chain(symbol, expiration_date)
+                    if 'calls' not in options_data or options_data['calls'].empty:
+                        continue
+
+                    calls = options_data['calls']
 
                     for _, option in calls.iterrows():
-                        strike = option['strike']
+                        strike = option.get('strike', 0)
                         volume = option.get('volume', 0) or 0
-                        iv = option.get('impliedVolatility', 0) or 0
+                        iv = option.get('implied_volatility', 0) or 0
                         bid = option.get('bid', 0) or 0
                         ask = option.get('ask', 0) or 0
 
