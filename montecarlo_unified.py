@@ -4834,13 +4834,15 @@ async def get_realtime_market_sentiment(symbols: List[str], timeframe: str = "4h
 
 async def detect_market_regime(indicators: List[str] = None, lookback_days: int = 30) -> Dict[str, Any]:
     """Market regime detection - Feature disabled (requires yfinance historical data)"""
-    # Return default regime data
+    # Return default regime data matching expected format
     logger.debug("Market regime detection disabled")
     return {
-        'regime': 'unknown',
-        'composite_score': 0.5,
-        'confidence': 0.5,
-        'vix': {'current': 20, 'regime': 'normal_volatility'}
+        'overall_regime': 'unknown',
+        'regime_confidence': 0.5,
+        'regime_scores': {},
+        'components': {
+            'vix': {'current': 20, 'regime': 'normal_volatility'}
+        }
     }
 
     if indicators is None:
