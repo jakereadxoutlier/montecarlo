@@ -1360,11 +1360,19 @@ def retry_on_error(max_retries: int = 3, delay: float = 1.0):
         return wrapper
     return decorator
 
-# Most liquid options symbols - these have highest volume and best spreads
+# Top 10 most liquid options symbols - highest volume and best spreads
+# Reduced from 20 to 10 for comprehensive analysis with rate limiting
 LIQUID_OPTIONS_SYMBOLS = [
-    'SPY', 'QQQ', 'AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN',
-    'META', 'GOOGL', 'NFLX', 'SOFI', 'PLTR', 'F', 'BAC', 'XOM',
-    'DIS', 'UBER', 'RIVN', 'NIO'
+    'SPY',    # S&P 500 ETF - highest options liquidity
+    'QQQ',    # Nasdaq 100 ETF
+    'AAPL',   # Apple - mega cap tech
+    'TSLA',   # Tesla - highest retail options volume
+    'NVDA',   # Nvidia - AI leader
+    'AMD',    # AMD - chip sector
+    'MSFT',   # Microsoft - mega cap
+    'AMZN',   # Amazon - mega cap
+    'META',   # Meta - social media
+    'GOOGL'   # Google - mega cap
 ]
 
 # Fortune 500 stock symbols (top 100 most liquid for performance)
@@ -5183,8 +5191,8 @@ async def find_optimal_risk_reward_options_enhanced(
         symbol_options = []
         try:
             # Use Polygon.io for quote (NO YFINANCE)
-            # Add small delay to respect rate limits
-            await asyncio.sleep(0.2)  # 200ms delay = max 5 calls/second
+            # Add delay to respect rate limits
+            await asyncio.sleep(0.3)  # 300ms delay = max 3.3 calls/second
             quotes = await polygon_client.get_quote([symbol])
             if not quotes or symbol not in quotes:
                 logger.warning(f"Could not get quote for {symbol} from Polygon.io")
@@ -5195,7 +5203,7 @@ async def find_optimal_risk_reward_options_enhanced(
                 return []
 
             # Get available expirations from Polygon.io
-            await asyncio.sleep(0.2)  # Rate limit delay
+            await asyncio.sleep(0.3)  # Rate limit delay
             all_expirations = await polygon_client.get_expirations(symbol)
             if not all_expirations:
                 return []
@@ -5209,7 +5217,7 @@ async def find_optimal_risk_reward_options_enhanced(
             symbol_flow = flow_analysis['flow_data'].get(symbol, {})
             symbol_correlation = correlation_analysis['correlation_data'].get(symbol, {})
 
-            for expiration_date in available_dates[:1]:  # Analyze only 1 expiration to avoid rate limits
+            for expiration_date in available_dates:  # Analyze ALL expirations ≤30 days for complete dataset
                 try:
                     exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
                     days_to_exp = (exp_date - current_time).days
@@ -5219,8 +5227,8 @@ async def find_optimal_risk_reward_options_enhanced(
                         continue
 
                     # Get options chain from Polygon.io (NO YFINANCE)
-                    # Add small delay to respect rate limits (5 requests per second max)
-                    await asyncio.sleep(0.2)  # 200ms delay = max 5 calls/second
+                    # Add delay to respect rate limits
+                    await asyncio.sleep(0.3)  # 300ms delay = max 3.3 calls/second
                     options_data = await polygon_client.get_options_chain(symbol, expiration_date)
                     if 'calls' not in options_data or options_data['calls'].empty:
                         continue
@@ -5513,22 +5521,30 @@ async def find_optimal_risk_reward_options_enhanced(
 
     # Process symbols in batches to avoid rate limiting
     all_results = []
-    batch_size = 2  # Reduced from 5 to 2 symbols at a time
-    symbols_to_analyze = symbols[:20]  # Reduced from 50 to 20 for reliability
 
-    logger.info(f"Analyzing {len(symbols_to_analyze)} symbols in batches of {batch_size}")
+    logger.info(f"📊 Analyzing {len(symbols)} symbols sequentially (complete dataset for each symbol)")
 
-    for i in range(0, len(symbols_to_analyze), batch_size):
-        batch = symbols_to_analyze[i:i + batch_size]
-        logger.info(f"Processing batch {i//batch_size + 1}: {batch}")
+    # Process symbols ONE AT A TIME for complete dataset analysis
+    for idx, symbol in enumerate(symbols, 1):
+        logger.info(f"🔍 Analyzing {symbol} ({idx}/{len(symbols)}) - scanning ALL options ≤30 days...")
 
-        tasks = [analyze_symbol_enhanced(symbol) for symbol in batch]
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-        all_results.extend(batch_results)
+        try:
+            symbol_results = await analyze_symbol_enhanced(symbol)
 
-        # Add longer delay between batches to avoid rate limiting
-        if i + batch_size < len(symbols_to_analyze):
-            await asyncio.sleep(2.0)  # Increased to 2 second delay between batches
+            if isinstance(symbol_results, Exception):
+                logger.error(f"❌ {symbol}: Error - {symbol_results}")
+                all_results.append([])
+            else:
+                num_options = len(symbol_results) if symbol_results else 0
+                logger.info(f"✅ {symbol}: Found {num_options} options")
+                all_results.append(symbol_results)
+        except Exception as e:
+            logger.error(f"❌ {symbol}: Exception - {e}")
+            all_results.append([])
+
+        # Small delay between symbols for safety (on top of per-call delays)
+        if idx < len(symbols):
+            await asyncio.sleep(0.5)  # 500ms breathing room between symbols
 
     results = all_results
 
