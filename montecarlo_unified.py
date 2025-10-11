@@ -1360,19 +1360,16 @@ def retry_on_error(max_retries: int = 3, delay: float = 1.0):
         return wrapper
     return decorator
 
-# Top 10 most liquid options symbols - highest volume and best spreads
-# Reduced from 20 to 10 for comprehensive analysis with rate limiting
+# Top 5 most liquid options symbols - highest volume and best spreads
+# Reduced from 10 to 5 to stay under Polygon.io Options Starter rate limits
+# Each symbol requires ~6 API calls (quote + expirations + 4 option chains)
+# 5 symbols × 6 calls × 1.5s = ~45 seconds, ~40 calls/minute (safe for Polygon.io)
 LIQUID_OPTIONS_SYMBOLS = [
     'SPY',    # S&P 500 ETF - highest options liquidity
     'QQQ',    # Nasdaq 100 ETF
     'AAPL',   # Apple - mega cap tech
     'TSLA',   # Tesla - highest retail options volume
     'NVDA',   # Nvidia - AI leader
-    'AMD',    # AMD - chip sector
-    'MSFT',   # Microsoft - mega cap
-    'AMZN',   # Amazon - mega cap
-    'META',   # Meta - social media
-    'GOOGL'   # Google - mega cap
 ]
 
 # Fortune 500 stock symbols (top 100 most liquid for performance)
@@ -5191,8 +5188,8 @@ async def find_optimal_risk_reward_options_enhanced(
         symbol_options = []
         try:
             # Use Polygon.io for quote (NO YFINANCE)
-            # Add delay to respect rate limits
-            await asyncio.sleep(0.5)  # 500ms delay = max 2 calls/second
+            # Add delay to respect rate limits (Polygon.io has strict burst limits)
+            await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
             quotes = await polygon_client.get_quote([symbol])
             if not quotes or symbol not in quotes:
                 logger.warning(f"Could not get quote for {symbol} from Polygon.io")
@@ -5203,7 +5200,7 @@ async def find_optimal_risk_reward_options_enhanced(
                 return []
 
             # Get available expirations from Polygon.io
-            await asyncio.sleep(0.5)  # Rate limit delay
+            await asyncio.sleep(1.5)  # Rate limit delay
             all_expirations = await polygon_client.get_expirations(symbol)
             if not all_expirations:
                 return []
@@ -5228,14 +5225,14 @@ async def find_optimal_risk_reward_options_enhanced(
 
                     # Get options chain from Polygon.io (NO YFINANCE)
                     # Add delay to respect rate limits
-                    await asyncio.sleep(0.5)  # 500ms delay = max 2 calls/second
+                    await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
                     options_data = await polygon_client.get_options_chain(symbol, expiration_date)
                     if 'calls' not in options_data or options_data['calls'].empty:
                         continue
 
                     calls = options_data['calls']
 
-                    logger.debug(f"🔍 {symbol} {expiration_date}: Processing {len(calls)} calls, current_price=${current_price}")
+                    logger.info(f"🔍 {symbol} {expiration_date}: Processing {len(calls)} calls, current_price=${current_price}")
 
                     for _, option in calls.iterrows():
                         strike = option.get('strike', 0)
@@ -5250,7 +5247,7 @@ async def find_optimal_risk_reward_options_enhanced(
 
                         # Debug: Log first few options to see what we're working with
                         if _ < 3:  # Log first 3 options per expiration
-                            logger.debug(f"  Option ${strike}: vol={volume}, IV={iv}, bid={bid}, ask={ask}")
+                            logger.info(f"  Option ${strike}: vol={volume}, IV={iv:.4f}, bid={bid}, ask={ask}")
 
                         if (strike > current_price and volume >= min_volume and
                             iv >= min_iv and bid > 0 and ask > 0):
@@ -5529,7 +5526,7 @@ async def find_optimal_risk_reward_options_enhanced(
                                     reasons.append(f"no_bid({bid})")
                                 if ask <= 0:
                                     reasons.append(f"no_ask({ask})")
-                                logger.debug(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
+                                logger.info(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
 
                 except Exception as e:
                     logger.warning(f"Error analyzing {symbol} {expiration_date}: {e}")
@@ -5565,7 +5562,7 @@ async def find_optimal_risk_reward_options_enhanced(
 
         # Extra delay between symbols for rate limit safety
         if idx < len(symbols):
-            await asyncio.sleep(1.0)  # 1 second breathing room between symbols
+            await asyncio.sleep(2.0)  # 2 seconds breathing room between symbols
 
     results = all_results
 
