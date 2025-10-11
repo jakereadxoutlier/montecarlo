@@ -5192,7 +5192,7 @@ async def find_optimal_risk_reward_options_enhanced(
         try:
             # Use Polygon.io for quote (NO YFINANCE)
             # Add delay to respect rate limits
-            await asyncio.sleep(0.3)  # 300ms delay = max 3.3 calls/second
+            await asyncio.sleep(0.5)  # 500ms delay = max 2 calls/second
             quotes = await polygon_client.get_quote([symbol])
             if not quotes or symbol not in quotes:
                 logger.warning(f"Could not get quote for {symbol} from Polygon.io")
@@ -5203,7 +5203,7 @@ async def find_optimal_risk_reward_options_enhanced(
                 return []
 
             # Get available expirations from Polygon.io
-            await asyncio.sleep(0.3)  # Rate limit delay
+            await asyncio.sleep(0.5)  # Rate limit delay
             all_expirations = await polygon_client.get_expirations(symbol)
             if not all_expirations:
                 return []
@@ -5228,12 +5228,14 @@ async def find_optimal_risk_reward_options_enhanced(
 
                     # Get options chain from Polygon.io (NO YFINANCE)
                     # Add delay to respect rate limits
-                    await asyncio.sleep(0.3)  # 300ms delay = max 3.3 calls/second
+                    await asyncio.sleep(0.5)  # 500ms delay = max 2 calls/second
                     options_data = await polygon_client.get_options_chain(symbol, expiration_date)
                     if 'calls' not in options_data or options_data['calls'].empty:
                         continue
 
                     calls = options_data['calls']
+
+                    logger.debug(f"🔍 {symbol} {expiration_date}: Processing {len(calls)} calls, current_price=${current_price}")
 
                     for _, option in calls.iterrows():
                         strike = option.get('strike', 0)
@@ -5244,7 +5246,11 @@ async def find_optimal_risk_reward_options_enhanced(
 
                         # Enhanced filtering with lower minimums for "always show results"
                         min_volume = 10 if always_show_results else 25
-                        min_iv = 0.05 if always_show_results else 0.10
+                        min_iv = 0.01 if always_show_results else 0.05  # Relaxed from 0.05/0.10 to 0.01/0.05
+
+                        # Debug: Log first few options to see what we're working with
+                        if _ < 3:  # Log first 3 options per expiration
+                            logger.debug(f"  Option ${strike}: vol={volume}, IV={iv}, bid={bid}, ask={ask}")
 
                         if (strike > current_price and volume >= min_volume and
                             iv >= min_iv and bid > 0 and ask > 0):
@@ -5509,6 +5515,21 @@ async def find_optimal_risk_reward_options_enhanced(
                                 },
                                 **advanced_result.get('analysis_techniques', {})
                             })
+                        else:
+                            # Debug: Log why option was filtered out (only for first few)
+                            if _ < 3:  # Only log first 3 rejections per expiration
+                                reasons = []
+                                if strike <= current_price:
+                                    reasons.append(f"ITM/ATM (${strike} <= ${current_price})")
+                                if volume < min_volume:
+                                    reasons.append(f"low_vol({volume} < {min_volume})")
+                                if iv < min_iv:
+                                    reasons.append(f"low_IV({iv:.4f} < {min_iv})")
+                                if bid <= 0:
+                                    reasons.append(f"no_bid({bid})")
+                                if ask <= 0:
+                                    reasons.append(f"no_ask({ask})")
+                                logger.debug(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
 
                 except Exception as e:
                     logger.warning(f"Error analyzing {symbol} {expiration_date}: {e}")
@@ -5542,9 +5563,9 @@ async def find_optimal_risk_reward_options_enhanced(
             logger.error(f"❌ {symbol}: Exception - {e}")
             all_results.append([])
 
-        # Small delay between symbols for safety (on top of per-call delays)
+        # Extra delay between symbols for rate limit safety
         if idx < len(symbols):
-            await asyncio.sleep(0.5)  # 500ms breathing room between symbols
+            await asyncio.sleep(1.0)  # 1 second breathing room between symbols
 
     results = all_results
 
