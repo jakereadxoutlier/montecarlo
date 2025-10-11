@@ -923,10 +923,13 @@ class PolygonClient:
         quotes = {}
         for symbol in symbols:
             try:
+                # Try both authentication methods (query param + header)
+                headers = {'Authorization': f'Bearer {self.api_key}'}
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"{self.base_url}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}",
                         params={'apiKey': self.api_key},
+                        headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10)
                     ) as response:
                         if response.status == 200:
@@ -944,7 +947,12 @@ class PolygonClient:
                                 'close': day_data.get('c', 0)
                             }
                         else:
-                            logger.warning(f"Polygon quote error for {symbol}: {response.status}")
+                            # Get detailed error message
+                            try:
+                                error_data = await response.json()
+                                logger.error(f"Polygon quote error for {symbol}: {response.status} - {error_data}")
+                            except:
+                                logger.error(f"Polygon quote error for {symbol}: {response.status}")
 
             except Exception as e:
                 logger.warning(f"Error fetching quote for {symbol}: {e}")
@@ -968,10 +976,13 @@ class PolygonClient:
             if expiration:
                 params['expiration_date'] = expiration
 
+            headers = {'Authorization': f'Bearer {self.api_key}'}
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     url,
                     params=params,
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=15)
                 ) as response:
                     if response.status == 200:
@@ -1013,7 +1024,12 @@ class PolygonClient:
                             'puts': pd.DataFrame(puts) if puts else pd.DataFrame()
                         }
                     else:
-                        logger.error(f"Polygon options error {response.status}")
+                        # Get detailed error message
+                        try:
+                            error_data = await response.json()
+                            logger.error(f"Polygon options error for {symbol}: {response.status} - {error_data}")
+                        except:
+                            logger.error(f"Polygon options error for {symbol}: {response.status}")
                         return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
 
         except Exception as e:
@@ -1028,6 +1044,7 @@ class PolygonClient:
 
         try:
             # Polygon has a dedicated expirations endpoint
+            headers = {'Authorization': f'Bearer {self.api_key}'}
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.base_url}/v3/reference/options/contracts",
@@ -1036,6 +1053,7 @@ class PolygonClient:
                         'limit': 1000,
                         'apiKey': self.api_key
                     },
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     if response.status == 200:
@@ -1050,7 +1068,12 @@ class PolygonClient:
 
                         return expirations
                     else:
-                        logger.error(f"Polygon expirations error {response.status}")
+                        # Get detailed error message
+                        try:
+                            error_data = await response.json()
+                            logger.error(f"Polygon expirations error for {symbol}: {response.status} - {error_data}")
+                        except:
+                            logger.error(f"Polygon expirations error for {symbol}: {response.status}")
                         return []
 
         except Exception as e:
