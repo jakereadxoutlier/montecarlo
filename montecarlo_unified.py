@@ -915,37 +915,44 @@ class PolygonClient:
         logger.info(f"Polygon.io Client initialized: {'Enabled' if self.enabled else 'Disabled'}")
 
     async def get_quote(self, symbols: List[str]) -> Dict[str, Any]:
-        """Get quotes for multiple symbols (15-min delayed)"""
+        """
+        Get quotes for multiple symbols using Previous Close endpoint.
+        Options Starter plan doesn't include real-time snapshots, so we use previous day's close.
+        """
         if not self.enabled:
             logger.error("Polygon.io not configured - API key required")
             return {}
 
         quotes = {}
+        headers = {'Authorization': f'Bearer {self.api_key}'}
+
         for symbol in symbols:
             try:
-                # Try both authentication methods (query param + header)
-                headers = {'Authorization': f'Bearer {self.api_key}'}
+                # Use Previous Close endpoint (available with Options Starter)
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"{self.base_url}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}",
-                        params={'apiKey': self.api_key},
+                        f"{self.base_url}/v2/aggs/ticker/{symbol}/prev",
+                        params={'apiKey': self.api_key, 'adjusted': 'true'},
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10)
                     ) as response:
                         if response.status == 200:
                             data = await response.json()
-                            ticker_data = data.get('ticker', {})
-                            last_quote = ticker_data.get('lastQuote', {})
-                            day_data = ticker_data.get('day', {})
+                            results = data.get('results', [])
 
-                            quotes[symbol] = {
-                                'price': last_quote.get('p', 0),  # Last price
-                                'volume': day_data.get('v', 0),  # Volume
-                                'open': day_data.get('o', 0),
-                                'high': day_data.get('h', 0),
-                                'low': day_data.get('l', 0),
-                                'close': day_data.get('c', 0)
-                            }
+                            if results:
+                                result = results[0]
+                                quotes[symbol] = {
+                                    'price': result.get('c', 0),  # Close price (most recent)
+                                    'volume': result.get('v', 0),  # Volume
+                                    'open': result.get('o', 0),
+                                    'high': result.get('h', 0),
+                                    'low': result.get('l', 0),
+                                    'close': result.get('c', 0)
+                                }
+                                logger.debug(f"✅ Got quote for {symbol}: ${result.get('c', 0)}")
+                            else:
+                                logger.warning(f"No data returned for {symbol}")
                         else:
                             # Get detailed error message
                             try:
@@ -956,6 +963,9 @@ class PolygonClient:
 
             except Exception as e:
                 logger.warning(f"Error fetching quote for {symbol}: {e}")
+
+        if quotes:
+            logger.info(f"✅ Polygon.io: Got quotes for {len(quotes)}/{len(symbols)} symbols")
 
         return quotes
 
@@ -4823,7 +4833,16 @@ async def get_realtime_market_sentiment(symbols: List[str], timeframe: str = "4h
     }
 
 async def detect_market_regime(indicators: List[str] = None, lookback_days: int = 30) -> Dict[str, Any]:
-    """Detect current market regime using multiple indicators."""
+    """Market regime detection - Feature disabled (requires yfinance historical data)"""
+    # Return default regime data
+    logger.debug("Market regime detection disabled")
+    return {
+        'regime': 'unknown',
+        'composite_score': 0.5,
+        'confidence': 0.5,
+        'vix': {'current': 20, 'regime': 'normal_volatility'}
+    }
+
     if indicators is None:
         indicators = ["VIX", "yield_curve", "momentum", "sentiment"]
 
