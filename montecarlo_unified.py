@@ -4431,9 +4431,17 @@ async def cross_asset_correlation_analysis(
     lookback_days: int = 90
 ) -> Dict[str, Any]:
     """
-    Analyze how the stock correlates with bonds, dollar, commodities, and crypto.
-    This provides cross-asset context for options analysis.
+    Cross-asset correlation - Feature disabled (requires yfinance)
     """
+    # Return neutral correlation data
+    logger.debug(f"Cross-asset correlation disabled for {symbol}")
+    return {
+        'symbol': symbol,
+        'market_correlation_strength': 0.5,
+        'favorable_correlation_direction': 0.5,
+        'correlation_confidence': 0.5
+    }
+
     correlations = {}
     current_factors = {}
 
@@ -4687,7 +4695,19 @@ async def advanced_volatility_forecasting(
 # ==================== INSTITUTIONAL-GRADE ENHANCEMENT FUNCTIONS ====================
 
 async def get_realtime_market_sentiment(symbols: List[str], timeframe: str = "4h", sources: List[str] = None) -> Dict[str, Any]:
-    """Get real-time market sentiment from multiple sources for enhanced analysis."""
+    """Market sentiment - Analyst sentiment feature disabled (requires yfinance)"""
+    # Return neutral sentiment for all symbols
+    sentiment_data = {}
+    for symbol in symbols:
+        sentiment_data[symbol] = {
+            'composite_score': 0.0,
+            'news_sentiment': 0.0,
+            'social_sentiment': 0.0,
+            'analyst_sentiment': 0.0,
+            'confidence': 0.5
+        }
+    return {'sentiment_data': sentiment_data}
+
     if sources is None:
         sources = ["news", "social", "analyst"]
 
@@ -4935,8 +4955,17 @@ async def detect_market_regime(indicators: List[str] = None, lookback_days: int 
         }
 
 async def get_options_flow_analysis(symbols: List[str], timeframe: str = "4h", min_premium: float = 50000) -> Dict[str, Any]:
-    """Analyze options flow for unusual activity (simplified version)."""
+    """Options flow analysis - Feature disabled (requires yfinance)"""
+    # Return neutral flow data for all symbols
     flow_data = {}
+    for symbol in symbols:
+        flow_data[symbol] = {
+            'unusual_activity': False,
+            'flow_signal': 0.0,
+            'put_call_ratio': 1.0,
+            'confidence': 0.5
+        }
+    return {'flow_data': flow_data}
 
     for symbol in symbols:
         try:
