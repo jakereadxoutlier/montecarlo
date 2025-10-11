@@ -5183,6 +5183,8 @@ async def find_optimal_risk_reward_options_enhanced(
         symbol_options = []
         try:
             # Use Polygon.io for quote (NO YFINANCE)
+            # Add small delay to respect rate limits
+            await asyncio.sleep(0.2)  # 200ms delay = max 5 calls/second
             quotes = await polygon_client.get_quote([symbol])
             if not quotes or symbol not in quotes:
                 logger.warning(f"Could not get quote for {symbol} from Polygon.io")
@@ -5193,6 +5195,7 @@ async def find_optimal_risk_reward_options_enhanced(
                 return []
 
             # Get available expirations from Polygon.io
+            await asyncio.sleep(0.2)  # Rate limit delay
             all_expirations = await polygon_client.get_expirations(symbol)
             if not all_expirations:
                 return []
@@ -5206,7 +5209,7 @@ async def find_optimal_risk_reward_options_enhanced(
             symbol_flow = flow_analysis['flow_data'].get(symbol, {})
             symbol_correlation = correlation_analysis['correlation_data'].get(symbol, {})
 
-            for expiration_date in available_dates[:3]:  # Analyze top 3 expirations for performance
+            for expiration_date in available_dates[:1]:  # Analyze only 1 expiration to avoid rate limits
                 try:
                     exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
                     days_to_exp = (exp_date - current_time).days
@@ -5216,6 +5219,8 @@ async def find_optimal_risk_reward_options_enhanced(
                         continue
 
                     # Get options chain from Polygon.io (NO YFINANCE)
+                    # Add small delay to respect rate limits (5 requests per second max)
+                    await asyncio.sleep(0.2)  # 200ms delay = max 5 calls/second
                     options_data = await polygon_client.get_options_chain(symbol, expiration_date)
                     if 'calls' not in options_data or options_data['calls'].empty:
                         continue
