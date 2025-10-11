@@ -93,12 +93,36 @@ async def rate_limited_ticker(symbol: str, retries: int = 3) -> yf.Ticker:
 # Load environment variables
 dotenv.load_dotenv()
 
-# API Keys Configuration
-NEWSAPI_KEY = os.getenv('NEWSAPI_KEY')
-X_API_KEY = os.getenv('X_API_KEY')
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("montecarlo-unified")
+
+# ============================================================================
+# API KEYS CONFIGURATION
+# ============================================================================
+
+# Market Data APIs
+POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')  # Polygon.io Options Starter ($29/mo)
+ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')  # Optional fallback
+FRED_API_KEY = os.getenv('FRED_API_KEY')  # Economic indicators
+
+# News & Social Sentiment APIs
+NEWS_API_KEY = os.getenv('NEWS_API_KEY')  # Also check NEWSAPI_KEY for backward compatibility
+NEWSAPI_KEY = os.getenv('NEWSAPI_KEY', NEWS_API_KEY)  # Backward compatibility
+X_API_KEY = os.getenv('X_API_KEY')  # Twitter/X API
 X_API_SECRET = os.getenv('X_API_SECRET')
-ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
-FRED_API_KEY = os.getenv('FRED_API_KEY')
+
+# AI Enhancement APIs (Optional - graceful fallback if not present)
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')  # AI-powered sentiment ($20/mo)
+SERPER_API_KEY = os.getenv('SERPER_API_KEY')  # Google search API (optional)
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # GPT-4 analysis (optional)
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')  # Claude analysis (optional)
+
+# Check if AI features are enabled
+AI_ENABLED = bool(PERPLEXITY_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY)
 
 # Slack App Configuration
 SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')  # xoxb-your-bot-token
@@ -111,10 +135,11 @@ selected_options = {}  # Store selected options for monitoring
 monitoring_active = False
 monitoring_task = None  # Background monitoring task
 
-# Optimized monitoring intervals
-PRICE_CHECK_INTERVAL = 60  # 1 minute for price/Greeks (FREE - yfinance only)
-NEWS_CHECK_INTERVAL = 43200  # 12 hours for news/sentiment (PAID APIs)
-last_news_check = {}  # Track last news check per symbol
+# ADAPTIVE monitoring intervals (market hours vs after-hours)
+PRICE_CHECK_INTERVAL_MARKET = 30  # 30 seconds during market hours (Polygon.io 15-min delayed)
+PRICE_CHECK_INTERVAL_AFTERHOURS = 300  # 5 minutes after hours (cached EOD)
+SENTIMENT_CHECK_INTERVAL = 3600  # 1 hour for sentiment (Perplexity preferred)
+last_sentiment_check = {}  # Track last sentiment check per symbol
 
 # Slack App initialization - deferred until start_slack_app() is called
 slack_app = None
@@ -189,6 +214,145 @@ class PerplexityClient:
         except Exception as e:
             logger.error(f"Perplexity search error: {e}")
             return {"error": str(e)}
+
+    async def analyze_sentiment(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get comprehensive market sentiment for a symbol using Perplexity.
+        Better than NewsAPI because it aggregates multiple sources + AI analysis.
+        """
+        if not self.enabled:
+            return {"error": "Perplexity not enabled", "sentiment_score": 0.0, "boost": 0.0}
+
+        try:
+            query = f"""Analyze current market sentiment for {symbol} stock in the last 24-48 hours.
+
+Consider:
+1. Recent news (earnings, products, executive changes)
+2. Analyst upgrades/downgrades
+3. Social media sentiment (Twitter, Reddit, financial forums)
+4. Price action and momentum
+5. Any unusual activity or catalysts
+
+Provide a sentiment score from -1.0 (very bearish) to +1.0 (very bullish), and explain the key factors.
+Format your response as:
+SENTIMENT_SCORE: [number between -1.0 and +1.0]
+KEY_FACTORS: [bulleted list of 3-5 key factors]
+CONFIDENCE: [low/medium/high]"""
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": "pplx-70b-online",  # Use online model for real-time data
+                "messages": [{"role": "user", "content": query}],
+                "max_tokens": 800,
+                "temperature": 0.2,  # Low temp for consistent sentiment scoring
+                "return_citations": True
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                        # Parse sentiment score from response
+                        sentiment_score = self._parse_sentiment_score(content)
+                        key_factors = self._parse_key_factors(content)
+                        confidence = self._parse_confidence(content)
+
+                        # Convert to sentiment boost (-0.2 to +0.2 for ITM probability adjustment)
+                        boost = sentiment_score * 0.2  # ±20% max impact
+
+                        return {
+                            "success": True,
+                            "sentiment_score": sentiment_score,
+                            "boost": boost,
+                            "key_factors": key_factors,
+                            "confidence": confidence,
+                            "raw_analysis": content,
+                            "citations": data.get("citations", []),
+                            "source": "perplexity",
+                            "timestamp": datetime.datetime.now().isoformat()
+                        }
+                    elif response.status == 429:
+                        logger.warning(f"Perplexity rate limit hit for {symbol}")
+                        return {"error": "rate_limit", "sentiment_score": 0.0, "boost": 0.0}
+                    else:
+                        logger.warning(f"Perplexity API error {response.status} for {symbol}")
+                        return {"error": f"API error {response.status}", "sentiment_score": 0.0, "boost": 0.0}
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Perplexity timeout for {symbol}")
+            return {"error": "timeout", "sentiment_score": 0.0, "boost": 0.0}
+        except Exception as e:
+            logger.error(f"Perplexity sentiment error for {symbol}: {e}")
+            return {"error": str(e), "sentiment_score": 0.0, "boost": 0.0}
+
+    def _parse_sentiment_score(self, content: str) -> float:
+        """Extract sentiment score from Perplexity response"""
+        try:
+            # Look for "SENTIMENT_SCORE: X.X" pattern
+            import re
+            match = re.search(r'SENTIMENT_SCORE:\s*([-+]?\d*\.?\d+)', content, re.IGNORECASE)
+            if match:
+                score = float(match.group(1))
+                return max(-1.0, min(1.0, score))  # Clamp to [-1.0, 1.0]
+
+            # Fallback: analyze keywords in response
+            content_lower = content.lower()
+            positive_words = ['bullish', 'positive', 'upgrade', 'beat', 'growth', 'strong', 'surge', 'rally']
+            negative_words = ['bearish', 'negative', 'downgrade', 'miss', 'decline', 'weak', 'plunge', 'selloff']
+
+            pos_count = sum(1 for word in positive_words if word in content_lower)
+            neg_count = sum(1 for word in negative_words if word in content_lower)
+
+            if pos_count + neg_count == 0:
+                return 0.0
+
+            score = (pos_count - neg_count) / (pos_count + neg_count)
+            return max(-1.0, min(1.0, score))
+
+        except Exception as e:
+            logger.warning(f"Failed to parse sentiment score: {e}")
+            return 0.0
+
+    def _parse_key_factors(self, content: str) -> List[str]:
+        """Extract key factors from Perplexity response"""
+        try:
+            # Look for KEY_FACTORS section
+            import re
+            factors_match = re.search(r'KEY_FACTORS:(.*?)(?:CONFIDENCE:|$)', content, re.IGNORECASE | re.DOTALL)
+            if factors_match:
+                factors_text = factors_match.group(1)
+                # Extract bulleted items
+                factors = re.findall(r'[-•*]\s*(.+?)(?:\n|$)', factors_text)
+                return [f.strip() for f in factors if f.strip()][:5]  # Max 5 factors
+
+            # Fallback: extract first 3 sentences
+            sentences = content.split('.')[:3]
+            return [s.strip() + '.' for s in sentences if s.strip()]
+
+        except Exception as e:
+            logger.warning(f"Failed to parse key factors: {e}")
+            return []
+
+    def _parse_confidence(self, content: str) -> str:
+        """Extract confidence level from Perplexity response"""
+        content_lower = content.lower()
+        if 'confidence: high' in content_lower or 'high confidence' in content_lower:
+            return 'high'
+        elif 'confidence: low' in content_lower or 'low confidence' in content_lower:
+            return 'low'
+        else:
+            return 'medium'
 
 class SerperClient:
     """Client for Serper API - Google search for market data and unusual activity"""
@@ -332,6 +496,28 @@ class LLMClient:
                 return {"error": f"Anthropic API error: {response.status}"}
 
 # AI clients will be initialized after configuration
+
+# ============================================================================
+# MARKET HOURS DETECTION HELPER
+# ============================================================================
+
+def is_market_hours() -> bool:
+    """Check if current time is during market hours (9:30 AM - 4:00 PM ET)"""
+    from datetime import datetime
+    import pytz
+
+    et_tz = pytz.timezone('America/New_York')
+    now_et = datetime.now(et_tz)
+
+    # Check if weekend
+    if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+
+    # Check time range
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    return market_open <= now_et <= market_close
 
 # ============================================================================
 # SENIOR ANALYST FEATURES - Dynamic Thresholds & Market Intelligence
@@ -766,53 +952,266 @@ async def get_ai_market_intelligence() -> Dict[str, Any]:
         logger.error(f"Market intelligence failed: {e}")
         return {"available": False, "error": str(e)}
 
-# Slack imports already done above
-
-
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
-# Load environment
-from dotenv import load_dotenv
-load_dotenv()
-
-# API Keys
-ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
-FRED_API_KEY = os.getenv('FRED_API_KEY')
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')
-
-# AI Enhancement API Keys (Optional - graceful fallback if not present)
-PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
-SERPER_API_KEY = os.getenv('SERPER_API_KEY')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
-
-# Check if AI features are enabled
-AI_ENABLED = bool(PERPLEXITY_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY)
-
-# Slack Tokens
-SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
-SLACK_APP_TOKEN = os.getenv('SLACK_APP_TOKEN')
-SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL')
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("montecarlo-unified")
-
-# Initialize AI clients after configuration
+# Initialize AI clients (defined above, configured from environment variables)
 perplexity_client = PerplexityClient()
 serper_client = SerperClient()
 llm_client = LLMClient()
+
+# ============================================================================
+# POLYGON.IO CLIENT - Options Data with Greeks
+# ============================================================================
+
+class PolygonClient:
+    """Client for Polygon.io Options Starter - Unlimited calls, Greeks & IV included"""
+
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or POLYGON_API_KEY
+        self.enabled = bool(self.api_key)
+        self.base_url = "https://api.polygon.io"
+        self.session = requests.Session()
+        # EOD cache storage
+        self.eod_cache = {}
+        self.cache_timestamp = {}
+        logger.info(f"Polygon.io Client initialized: {'Enabled' if self.enabled else 'Disabled'}")
+
+    async def get_quote(self, symbols: List[str]) -> Dict[str, Any]:
+        """Get quotes for multiple symbols (15-min delayed)"""
+        if not self.enabled:
+            logger.warning("Polygon.io not configured, using yfinance")
+            return await self._fallback_yfinance_quotes(symbols)
+
+        quotes = {}
+        for symbol in symbols:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{self.base_url}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}",
+                        params={'apiKey': self.api_key},
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            ticker_data = data.get('ticker', {})
+                            last_quote = ticker_data.get('lastQuote', {})
+                            day_data = ticker_data.get('day', {})
+
+                            quotes[symbol] = {
+                                'price': last_quote.get('p', 0),  # Last price
+                                'volume': day_data.get('v', 0),  # Volume
+                                'open': day_data.get('o', 0),
+                                'high': day_data.get('h', 0),
+                                'low': day_data.get('l', 0),
+                                'close': day_data.get('c', 0)
+                            }
+                        else:
+                            logger.warning(f"Polygon quote error for {symbol}: {response.status}")
+
+            except Exception as e:
+                logger.warning(f"Error fetching quote for {symbol}: {e}")
+
+        return quotes
+
+    async def get_options_chain(self, symbol: str, expiration: str = None) -> Dict[str, Any]:
+        """
+        Get options chain with Greeks & IV from Polygon.io
+        Uses Options Chain Snapshot endpoint
+        """
+        if not self.enabled:
+            return await self._fallback_yfinance_options(symbol, expiration)
+
+        try:
+            # Format expiration date for Polygon (YYYY-MM-DD)
+            url = f"{self.base_url}/v3/snapshot/options/{symbol}"
+
+            params = {'apiKey': self.api_key}
+            if expiration:
+                params['expiration_date'] = expiration
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        results = data.get('results', [])
+
+                        calls = []
+                        puts = []
+
+                        for opt in results:
+                            details = opt.get('details', {})
+                            greeks = opt.get('greeks', {})
+                            last_quote = opt.get('last_quote', {})
+
+                            option_dict = {
+                                'strike': details.get('strike_price', 0),
+                                'expiration': details.get('expiration_date', ''),
+                                'bid': last_quote.get('bid', 0),
+                                'ask': last_quote.get('ask', 0),
+                                'last': opt.get('day', {}).get('last_quote', {}).get('price', 0),
+                                'volume': opt.get('day', {}).get('volume', 0),
+                                'open_interest': opt.get('open_interest', 0),
+                                'implied_volatility': greeks.get('implied_volatility', 0),
+                                'delta': greeks.get('delta', 0),
+                                'gamma': greeks.get('gamma', 0),
+                                'theta': greeks.get('theta', 0),
+                                'vega': greeks.get('vega', 0),
+                            }
+
+                            if details.get('contract_type') == 'call':
+                                calls.append(option_dict)
+                            else:
+                                puts.append(option_dict)
+
+                        logger.info(f"Polygon: Got {len(calls)} calls, {len(puts)} puts for {symbol}")
+
+                        return {
+                            'calls': pd.DataFrame(calls) if calls else pd.DataFrame(),
+                            'puts': pd.DataFrame(puts) if puts else pd.DataFrame()
+                        }
+                    else:
+                        logger.warning(f"Polygon options error {response.status}, using yfinance fallback")
+                        return await self._fallback_yfinance_options(symbol, expiration)
+
+        except Exception as e:
+            logger.error(f"Polygon options fetch error: {e}")
+            return await self._fallback_yfinance_options(symbol, expiration)
+
+    async def get_expirations(self, symbol: str) -> List[str]:
+        """Get available expiration dates for a symbol"""
+        if not self.enabled:
+            return await self._fallback_yfinance_expirations(symbol)
+
+        try:
+            # Polygon has a dedicated expirations endpoint
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.base_url}/v3/reference/options/contracts",
+                    params={
+                        'underlying_ticker': symbol,
+                        'limit': 1000,
+                        'apiKey': self.api_key
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        results = data.get('results', [])
+
+                        # Extract unique expiration dates
+                        expirations = sorted(list(set(
+                            r.get('expiration_date') for r in results
+                            if r.get('expiration_date')
+                        )))
+
+                        return expirations
+                    else:
+                        return await self._fallback_yfinance_expirations(symbol)
+
+        except Exception as e:
+            logger.error(f"Error getting expirations: {e}")
+            return await self._fallback_yfinance_expirations(symbol)
+
+    async def cache_eod_snapshot(self, symbols: List[str]):
+        """Cache end-of-day snapshot for after-hours analysis"""
+        logger.info(f"Caching EOD snapshot for {len(symbols)} symbols...")
+
+        # Get quotes
+        quotes = await self.get_quote(symbols)
+
+        # Get options chains
+        for symbol in symbols:
+            try:
+                expirations = await self.get_expirations(symbol)
+
+                # Cache first 3 expirations
+                for exp_date in expirations[:3]:
+                    chain = await self.get_options_chain(symbol, exp_date)
+                    cache_key = f"{symbol}_{exp_date}"
+                    self.eod_cache[cache_key] = {
+                        'quote': quotes.get(symbol, {}),
+                        'options_chain': chain,
+                        'cached_at': datetime.datetime.now().isoformat()
+                    }
+                    logger.info(f"Cached EOD: {symbol} {exp_date}")
+
+            except Exception as e:
+                logger.warning(f"Failed to cache EOD for {symbol}: {e}")
+
+        self.cache_timestamp['cached_at'] = datetime.datetime.now()
+        logger.info(f"EOD cache complete: {len(self.eod_cache)} entries")
+
+    def get_cached_data(self, symbol: str, expiration: str = None) -> Dict[str, Any]:
+        """Get cached EOD data"""
+        if expiration:
+            cache_key = f"{symbol}_{expiration}"
+            return self.eod_cache.get(cache_key, {})
+
+        # Return any cached data for this symbol
+        for key, data in self.eod_cache.items():
+            if key.startswith(symbol):
+                return data
+
+        return {}
+
+    async def _fallback_yfinance_quotes(self, symbols: List[str]) -> Dict[str, Any]:
+        """Fallback to yfinance if Alpha Vantage fails"""
+        quotes = {}
+        for symbol in symbols:
+            try:
+                ticker = await rate_limited_ticker(symbol)
+                info = ticker.info
+                quotes[symbol] = {
+                    'price': info.get('regularMarketPrice', info.get('currentPrice', 0)),
+                    'volume': info.get('volume', 0),
+                }
+            except Exception as e:
+                logger.warning(f"yfinance fallback failed for {symbol}: {e}")
+        return quotes
+
+    async def _fallback_yfinance_options(self, symbol: str, expiration: str) -> Dict[str, Any]:
+        """Fallback to yfinance for options"""
+        try:
+            ticker = await rate_limited_ticker(symbol)
+            options_chain = ticker.option_chain(expiration)
+            return {
+                'calls': options_chain.calls,
+                'puts': options_chain.puts
+            }
+        except Exception as e:
+            logger.error(f"yfinance options fallback failed: {e}")
+            return {'calls': pd.DataFrame(), 'puts': pd.DataFrame()}
+
+    async def _fallback_yfinance_expirations(self, symbol: str) -> List[str]:
+        """Fallback to yfinance for expirations"""
+        try:
+            ticker = await rate_limited_ticker(symbol)
+            return list(ticker.options)
+        except Exception as e:
+            logger.error(f"yfinance expirations fallback failed: {e}")
+            return []
+
+# Use Polygon.io (user has $29/month Options Starter subscription)
+polygon_client = PolygonClient()
+
+# Alias for backward compatibility with existing code
+tradier_client = polygon_client
+alpha_vantage_client = polygon_client  # For any old references
 
 # Log AI status
 if AI_ENABLED:
     logger.info(f"🧠 AI Features ENABLED - Perplexity: {perplexity_client.enabled}, Serper: {serper_client.enabled}, LLM: {llm_client.provider or 'None'}")
 else:
     logger.info("🔢 Running in Math-Only Mode (No AI keys configured)")
+
+# Log Polygon.io status
+if polygon_client.enabled:
+    logger.info(f"💰 Polygon.io Options Starter ENABLED - Unlimited calls, Greeks & IV included")
+    logger.info(f"📊 15-minute delayed data (perfect for swing trading)")
+else:
+    logger.info(f"⚠️  Polygon.io DISABLED - Using yfinance fallback (rate limits may apply)")
 
 # ============================================================================
 # GLOBAL STATE
@@ -1949,6 +2348,73 @@ async def generate_buy_sell_advice(option_data: Dict[str, Any]) -> Dict[str, Any
             'confidence': 'None'
         }
 
+async def analyze_option_realtime(symbol: str, strike: float, expiration_date: str) -> Dict[str, Any]:
+    """
+    Complete option analysis with buy/sell advice and auto-monitoring.
+    This is the main function called by the Pick command handler.
+
+    Args:
+        symbol: Stock ticker symbol
+        strike: Strike price
+        expiration_date: Expiration date in YYYY-MM-DD format
+
+    Returns:
+        Dictionary with success status, option data, advice, and monitoring info
+    """
+    try:
+        # Get real-time option data
+        option_data = await get_realtime_option_data(symbol, strike, expiration_date)
+
+        if 'error' in option_data:
+            return {
+                'success': False,
+                'error': option_data['error']
+            }
+
+        # Generate buy/sell advice
+        advice = await generate_buy_sell_advice(option_data)
+
+        # Auto-monitor if it's a BUY recommendation
+        auto_monitored = False
+        if advice['recommendation'] in ['STRONG BUY', 'BUY']:
+            try:
+                # Add to monitoring system
+                select_option_for_monitoring(
+                    symbol=symbol,
+                    strike=strike,
+                    expiration_date=expiration_date,
+                    initial_analysis=option_data,
+                    advice=advice
+                )
+                auto_monitored = True
+                logger.info(f"✅ Auto-monitoring enabled for {symbol} ${strike} (BUY recommendation)")
+            except Exception as e:
+                logger.warning(f"Failed to auto-monitor {symbol} ${strike}: {e}")
+
+        # Count total monitored positions
+        monitored_list = list_selected_options()
+        total_monitored = len(monitored_list.get('data', {}).get('selected_options', {}))
+
+        return {
+            'success': True,
+            'data': {
+                'option_data': option_data,
+                'advice': advice,
+                'auto_monitoring': {
+                    'enabled': auto_monitored,
+                    'total_monitored': total_monitored,
+                    'reason': 'BUY recommendation' if auto_monitored else 'Not a BUY recommendation'
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error analyzing option {symbol} ${strike}: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 def calculate_profit_scenarios(option_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Calculate potential profit/loss scenarios for the option.
@@ -3040,95 +3506,144 @@ def calculate_black_scholes_greeks(
 # Continuous Monitoring System
 async def monitor_selected_options():
     """
-    OPTIMIZED monitoring: 1-minute price/Greeks checks, 12-hour news/sentiment checks.
-    This reduces API costs while maintaining real-time sell alerts.
-    """
-    global selected_options, monitoring_active, last_news_check
+    ADAPTIVE MONITORING: Optimized for swing trading with market hours detection.
 
-    logger.info("Starting optimized continuous option monitoring system")
-    logger.info(f"Price monitoring: Every {PRICE_CHECK_INTERVAL} seconds (FREE)")
-    logger.info(f"News monitoring: Every {NEWS_CHECK_INTERVAL/3600:.1f} hours (PAID APIs)")
+    Market Hours (9:30 AM - 4:00 PM ET):
+    - Prices: Every 30 seconds (Tradier real-time)
+    - Sentiment: Every 1 hour (Perplexity)
+
+    After Hours:
+    - Prices: Every 5 minutes (cached EOD data)
+    - Sentiment: No updates (use last market close data)
+    """
+    global selected_options, monitoring_active, last_sentiment_check
+
+    logger.info("🚀 Starting ADAPTIVE continuous option monitoring system")
+    logger.info(f"📊 Market hours: 30s price checks | 1hr sentiment updates")
+    logger.info(f"🌙 After hours: 5min cache checks | no sentiment updates")
 
     while monitoring_active:
         try:
             if not selected_options:
                 logger.info("No options selected for monitoring, sleeping for 60 seconds")
-                await asyncio.sleep(PRICE_CHECK_INTERVAL)
+                await asyncio.sleep(60)
                 continue
 
-            logger.info(f"Monitoring {len(selected_options)} selected options")
+            # Determine if market is open (adaptive timing)
+            market_is_open = is_market_hours()
+            price_check_interval = PRICE_CHECK_INTERVAL_MARKET if market_is_open else PRICE_CHECK_INTERVAL_AFTERHOURS
 
-            # STEP 1: Get current prices and Greeks (FREE - yfinance only)
+            logger.info(f"{'📈 MARKET OPEN' if market_is_open else '🌙 AFTER HOURS'} - Monitoring {len(selected_options)} options")
+
+            # STEP 1: Get current prices (Tradier or cached EOD)
             symbols = list(set(opt['symbol'] for opt in selected_options.values()))
             current_prices = {}
             current_greeks = {}
 
-            for symbol in symbols:
+            if market_is_open:
+                # MARKET HOURS: Use Polygon.io for data (15-min delayed, unlimited calls)
                 try:
-                    ticker = await rate_limited_ticker(symbol)
-
-                    # Get real-time price (FREE)
-                    info = ticker.info
-                    current_price = info.get('regularMarketPrice') or info.get('currentPrice')
-                    if current_price:
-                        current_prices[symbol] = current_price
-
-                        # Calculate Greeks for each option of this symbol
-                        symbol_options = {k: v for k, v in selected_options.items() if v['symbol'] == symbol}
-                        for option_key, option_data in symbol_options.items():
-                            exp_date = datetime.datetime.strptime(option_data['expiration_date'], '%Y-%m-%d')
-                            time_to_exp = max(0.001, (exp_date - datetime.datetime.now()).days / 365.25)
-
-                            # Calculate Greeks (FREE calculation)
-                            greeks = calculate_black_scholes_greeks(
-                                current_price=current_price,
-                                strike=option_data['strike'],
-                                time_to_expiration=time_to_exp,
-                                volatility=0.25,  # Estimated IV
-                                risk_free_rate=0.05,
-                                option_type='call'
-                            )
-                            current_greeks[option_key] = greeks
-
+                    quotes = await polygon_client.get_quote(symbols)
+                    for symbol, quote_data in quotes.items():
+                        current_prices[symbol] = quote_data.get('price', 0)
+                    logger.info(f"✅ Polygon.io: Got quotes for {len(current_prices)} symbols")
                 except Exception as e:
-                    logger.warning(f"Failed to get price/Greeks for {symbol}: {e}")
+                    logger.warning(f"Polygon.io failed, using fallback: {e}")
+                    # Fallback to yfinance if Tradier fails
+                    for symbol in symbols:
+                        try:
+                            ticker = await rate_limited_ticker(symbol)
+                            info = ticker.info
+                            current_prices[symbol] = info.get('regularMarketPrice') or info.get('currentPrice', 0)
+                        except Exception as ye:
+                            logger.warning(f"Fallback also failed for {symbol}: {ye}")
+            else:
+                # AFTER HOURS: Use cached EOD data
+                for symbol in symbols:
+                    try:
+                        cached = polygon_client.get_cached_data(symbol)
+                        if cached and 'quote' in cached:
+                            current_prices[symbol] = cached['quote'].get('price', 0)
+                            logger.debug(f"📦 Using cached EOD for {symbol}: ${current_prices[symbol]:.2f}")
+                        else:
+                            # No cache, use yfinance as last resort
+                            ticker = await rate_limited_ticker(symbol)
+                            info = ticker.info
+                            current_prices[symbol] = info.get('regularMarketPrice') or info.get('currentPrice', 0)
+                    except Exception as e:
+                        logger.warning(f"Failed to get price for {symbol}: {e}")
+
+            # Calculate Greeks for all options
+            for option_key, option_data in selected_options.items():
+                if option_data.get('status') == 'sold':
                     continue
 
-            # STEP 2: Check if we need news/sentiment updates (12-hour intervals)
+                symbol = option_data['symbol']
+                if symbol in current_prices:
+                    exp_date = datetime.datetime.strptime(option_data['expiration_date'], '%Y-%m-%d')
+                    time_to_exp = max(0.001, (exp_date - datetime.datetime.now()).days / 365.25)
+
+                    greeks = calculate_black_scholes_greeks(
+                        current_price=current_prices[symbol],
+                        strike=option_data['strike'],
+                        time_to_expiration=time_to_exp,
+                        volatility=0.25,  # Estimated IV
+                        risk_free_rate=0.05,
+                        option_type='call'
+                    )
+                    current_greeks[option_key] = greeks
+
+            # STEP 2: Get sentiment updates (only during market hours, hourly)
             current_time = datetime.datetime.now()
-            symbols_needing_news = []
+            symbols_needing_sentiment = []
 
-            for symbol in symbols:
-                last_check = last_news_check.get(symbol)
-                if not last_check or (current_time - last_check).seconds >= NEWS_CHECK_INTERVAL:
-                    symbols_needing_news.append(symbol)
+            if market_is_open:
+                for symbol in symbols:
+                    last_check = last_sentiment_check.get(symbol)
+                    if not last_check or (current_time - last_check).total_seconds() >= SENTIMENT_CHECK_INTERVAL:
+                        symbols_needing_sentiment.append(symbol)
 
-            # STEP 3: Get news/sentiment data only when needed (PAID APIs)
+            # STEP 3: Fetch sentiment (Perplexity preferred, NewsAPI fallback)
             sentiment_data = {}
-            if symbols_needing_news:
-                logger.info(f"Updating news/sentiment for {len(symbols_needing_news)} symbols")
-                for symbol in symbols_needing_news:
+            if symbols_needing_sentiment:
+                logger.info(f"🧠 Updating sentiment for {len(symbols_needing_sentiment)} symbols")
+                for symbol in symbols_needing_sentiment:
                     try:
-                        # Only call paid APIs when necessary
+                        # Try Perplexity first (better quality)
+                        if perplexity_client.enabled:
+                            perp_sentiment = await perplexity_client.analyze_sentiment(symbol)
+                            if perp_sentiment.get('success'):
+                                sentiment_data[symbol] = {
+                                    'sentiment_boost': perp_sentiment.get('boost', 0.0),
+                                    'sentiment_score': perp_sentiment.get('sentiment_score', 0.0),
+                                    'key_factors': perp_sentiment.get('key_factors', []),
+                                    'confidence': perp_sentiment.get('confidence', 'medium'),
+                                    'source': 'perplexity'
+                                }
+                                last_sentiment_check[symbol] = current_time
+                                logger.info(f"✅ Perplexity sentiment for {symbol}: {perp_sentiment.get('sentiment_score', 0):.2f}")
+                                continue
+
+                        # Fallback to NewsAPI + X API
                         news_data = await fetch_news_sentiment(symbol)
                         trend_data = await fetch_x_trends(symbol)
                         sentiment_boost = calculate_sentiment_boost(news_data, trend_data)
 
                         sentiment_data[symbol] = {
                             'sentiment_boost': sentiment_boost,
-                            'news_sentiment': news_data.get('sentiment_score', 0.0),
-                            'trend_score': trend_data.get('trend_score', 0.0)
+                            'sentiment_score': news_data.get('sentiment_score', 0.0),
+                            'trend_score': trend_data.get('trend_score', 0.0),
+                            'source': 'newsapi_fallback'
                         }
-
-                        last_news_check[symbol] = current_time
+                        last_sentiment_check[symbol] = current_time
+                        logger.info(f"📰 NewsAPI fallback for {symbol}: {sentiment_boost:.2f}")
 
                     except Exception as e:
                         logger.warning(f"Failed to get sentiment for {symbol}: {e}")
-                        # Use cached data or defaults
                         sentiment_data[symbol] = {
                             'sentiment_boost': 0.0,
-                            'news_sentiment': 0.0,
-                            'trend_score': 0.0
+                            'sentiment_score': 0.0,
+                            'source': 'error'
                         }
 
             # STEP 4: Update each selected option with current data
@@ -3215,14 +3730,15 @@ async def monitor_selected_options():
                     logger.error(f"Error monitoring option {option_key}: {e}")
                     continue
 
-            # STEP 6: Sleep until next price check
-            await asyncio.sleep(PRICE_CHECK_INTERVAL)
+            # STEP 6: Sleep until next check (adaptive timing)
+            await asyncio.sleep(price_check_interval)
+            logger.debug(f"💤 Sleeping for {price_check_interval}s ({' MARKET' if market_is_open else 'AFTER-HOURS'})")
 
         except Exception as e:
             logger.error(f"Error in monitoring loop: {e}")
-            await asyncio.sleep(PRICE_CHECK_INTERVAL)
+            await asyncio.sleep(60)  # Default 1 minute on error
 
-    logger.info("Optimized continuous monitoring stopped")
+    logger.info("🛑 Adaptive continuous monitoring stopped")
 
 async def check_monitoring_alerts(option_key: str, option_data: Dict[str, Any], current_price: float):
     """
@@ -5789,12 +6305,13 @@ def setup_message_handlers(app):
 - `Sold TSLA $430` - Mark TSLA $430 as sold (stops alerts)
 - `Stop` - Stop monitoring all positions
 
-**⚡ NEW: Institutional Features (Phase 2):**
-- **Alpha Vantage Integration**: Real earnings calendar, market data
+**⚡ Institutional Features:**
+- **Polygon.io Options Starter**: Unlimited API calls, Greeks & IV, 15-min delayed (perfect for swing trading)
+- **Perplexity AI**: Real-time market sentiment with multi-source aggregation
 - **FRED Economic Data**: Government bond yields, economic indicators
 - **5 Advanced Analytics**: Multi-scenario Monte Carlo, pattern recognition, volatility forecasting, event analysis, cross-asset correlation
-- **Auto-monitoring**: BUY recommendations automatically monitored
-- **Smart sell alerts**: Real-time profit target notifications
+- **Auto-monitoring**: BUY recommendations automatically monitored (30s market hours, 5min after-hours)
+- **Smart sell alerts**: Real-time profit target notifications with multi-factor scoring
 
 **🎯 Perfect for $1K+ trading capital with professional-grade analysis!**"""
             await say(help_text)
@@ -5809,16 +6326,17 @@ def setup_message_handlers(app):
 
         # Monitoring control commands
         elif any(word in text for word in ['cancel', 'stop', 'stop monitoring']):
-            result = await stop_continuous_monitoring()
-            if result and result.get('success'):
+            result = stop_continuous_monitoring()  # NOT async, remove await
+            if result and (result.get('stopped') or result.get('already_stopped')):
                 await say("🛑 **Monitoring Stopped**\n\nAll position monitoring has been stopped. You will no longer receive sell alerts.")
             else:
                 await say("❌ Error stopping monitoring. Please try again.")
 
         elif any(word in text for word in ['status', 'monitoring status', 'positions']):
-            result = await list_selected_options()
-            if result and result.get('success'):
-                data = result['data']
+            result = list_selected_options()  # NOT async, remove await
+            if result:
+                # result already has 'selected_options' and 'monitoring_active' keys
+                data = result
                 if data.get('selected_options'):
                     active_count = 0
                     sold_count = 0
@@ -5851,8 +6369,8 @@ def setup_message_handlers(app):
 
         # Start monitoring command
         elif any(word in text for word in ['start monitoring', 'resume monitoring']):
-            result = await start_continuous_monitoring()
-            if result and result.get('success'):
+            result = start_continuous_monitoring()  # NOT async, remove await
+            if result and (result.get('started') or result.get('already_running')):
                 await say("✅ **Monitoring Started**\n\nContinuous monitoring is now active. You'll receive sell alerts when profit targets are hit!")
             else:
                 await say("❌ Error starting monitoring. Please try again.")
@@ -5873,15 +6391,14 @@ def setup_message_handlers(app):
             await say(f"Marking {symbol} ${strike} as sold and stopping alerts...")
 
             # Mark option as sold directly
-            result = await mark_option_sold(
+            result = mark_option_sold(  # NOT async, remove await
                 symbol=symbol,
                 strike=strike,
-                expiration_date='2025-10-17'  # Default - will find any matching
+                expiration_date=None  # None means find any matching symbol/strike
             )
 
-            if result and result.get('success'):
-                data = result['data']
-                await say(f"✅ **{symbol} ${strike} Marked as SOLD**\n\n📊 Sell alerts stopped for this position.\n💰 Profit/Loss: {data.get('final_pnl', 'Not calculated')}\n\nGood trade! 🎉")
+            if result and result.get('marked_sold'):
+                await say(f"✅ **{symbol} ${strike} Marked as SOLD**\n\n📊 Sell alerts stopped for this position.\n💰 Profit/Loss: {result.get('final_pnl', 'Not calculated')}\n\nGood trade! 🎉")
             else:
                 error_msg = result.get('error', 'Unknown error') if result else 'Connection error'
                 await say(f"❌ Could not mark {symbol} ${strike} as sold: {error_msg}\n\nTry `Status` to see your monitored positions.")
