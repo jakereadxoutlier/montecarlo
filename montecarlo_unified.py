@@ -999,6 +999,15 @@ class PolygonClient:
                         data = await response.json()
                         results = data.get('results', [])
 
+                        # DEBUG: Log first option to see exact structure
+                        if results and len(results) > 0:
+                            logger.info(f"🔍 DEBUG Polygon.io response for {symbol}:")
+                            logger.info(f"  Total results: {len(results)}")
+                            logger.info(f"  First option keys: {list(results[0].keys())}")
+                            logger.info(f"  First option full: {results[0]}")
+                            if len(results) > 1:
+                                logger.info(f"  Last option (strike): {results[-1].get('details', {}).get('strike_price')}")
+
                         calls = []
                         puts = []
 
