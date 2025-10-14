@@ -747,7 +747,7 @@ async def enhance_option_with_ai(
 
         # 1. Perplexity: Real-time market context
         if perplexity_client.enabled:
-            query = f"{symbol} stock options analysis {strike} strike recent news catalysts unusual activity {datetime.now().strftime('%Y-%m-%d')}"
+            query = f"{symbol} stock options analysis {strike} strike recent news catalysts unusual activity {datetime.datetime.now().strftime('%Y-%m-%d')}"
             ai_tasks['perplexity'] = perplexity_client.search(query)
 
         # 2. Serper: Check for unusual options activity
@@ -3054,8 +3054,9 @@ def calculate_profit_potential(current_price: float, strike: float, option_price
 
     if option_price > 0:
         profit_potential = (intrinsic_at_target - option_price) / option_price
-        # Cap at 500% to avoid penny option lottery tickets ranking highest
-        return min(5.0, max(0, profit_potential))  # Cap at 500%
+        # Cap at 150% for realistic swing trading expectations
+        # 500% was too high - made lottery tickets rank high
+        return min(1.5, max(0, profit_potential))  # Cap at 150%
 
     return 0.0
 
@@ -3064,9 +3065,14 @@ def calculate_risk_level(current_price: float, strike: float, time_to_expiration
     """Calculate risk level on 1-10 scale (1=lowest risk, 10=highest risk)."""
     risk_factors = []
 
-    # 1. Moneyness risk (further OTM = higher risk)
-    moneyness = current_price / strike
-    moneyness_risk = max(1, 10 * (1 - moneyness))  # Higher when more OTM
+    # 1. Moneyness risk (further OTM = higher risk) - EXPONENTIAL PENALTY
+    if strike <= current_price:  # ITM or ATM
+        otm_percent = 0
+    else:  # OTM
+        otm_percent = (strike - current_price) / current_price
+
+    # Exponential penalty: 1% OTM = risk 2, 5% OTM = risk 6, 10% OTM = risk 11
+    moneyness_risk = 1 + (otm_percent * 100)
     risk_factors.append(min(10, moneyness_risk))
 
     # 2. Time decay risk (less time = higher risk)
@@ -5660,12 +5666,12 @@ async def find_optimal_risk_reward_options_enhanced(
     
         # Sort by enhanced composite score
         all_options.sort(key=lambda x: x['composite_score'], reverse=True)
-    
+
         # Categorize options
         ideal_options = []
         good_options = []
         acceptable_options = []
-    
+
         for opt in all_options:
             if (opt['itm_probability'] >= target_probability and
                 opt['profit_potential'] >= target_profit_potential and
