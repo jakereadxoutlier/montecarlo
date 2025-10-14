@@ -5145,614 +5145,627 @@ async def find_optimal_risk_reward_options_enhanced(
     5. Transparency about why options don't meet ideal criteria
     6. Confidence levels and market context
     """
-    logger.info(f"ENHANCED Smart Picks: Analyzing {len(symbols)} symbols with institutional-grade data")
+    try:
+        logger.info(f"ENHANCED Smart Picks: Analyzing {len(symbols)} symbols with institutional-grade data")
 
-    start_time = time.time()
-    current_time = datetime.datetime.now()
+        start_time = time.time()
+        current_time = datetime.datetime.now()
 
-    # Step 1: Market Regime Detection
-    logger.info("Step 1: Detecting market regime...")
-    market_regime = await detect_market_regime()
-    regime = market_regime['overall_regime']
-    regime_confidence = market_regime['regime_confidence']
-
-    # Step 2: Adapt criteria based on market regime
-    logger.info(f"Step 2: Adapting criteria for {regime} market regime...")
-    if regime == "high_volatility":
-        # In high vol, lower probability expectations but higher profit potential
-        adapted_probability = max(0.30, target_probability - 0.10)
-        adapted_profit = target_profit_potential + 0.05
-        adapted_risk = min(8, target_risk_level + 1)
-    elif regime == "bearish":
-        # In bear market, be more conservative
-        adapted_probability = max(0.35, target_probability - 0.05)
-        adapted_profit = target_profit_potential + 0.03
-        adapted_risk = max(4, target_risk_level - 1)
-    elif regime == "bullish":
-        # In bull market, can be slightly more aggressive
-        adapted_probability = max(0.40, target_probability - 0.03)
-        adapted_profit = target_profit_potential
-        adapted_risk = min(7, target_risk_level + 1)
-    else:  # sideways or unknown
-        adapted_probability = target_probability
-        adapted_profit = target_profit_potential
-        adapted_risk = target_risk_level
-
-    logger.info(f"Adapted criteria: P={adapted_probability:.1%}, Profit={adapted_profit:.1%}, Risk={adapted_risk}")
-
-    # Step 3: Get market sentiment for top symbols
-    logger.info("Step 3: Analyzing real-time market sentiment...")
-    sentiment_analysis = await get_realtime_market_sentiment(symbols[:50])  # Analyze top 50 for performance
-
-    # Step 4: Get options flow analysis
-    logger.info("Step 4: Analyzing options flow...")
-    flow_analysis = await get_options_flow_analysis(symbols[:20])  # Top 20 for flow analysis
-
-    # Step 4.5: PHASE 2 Cross-Asset Correlation Analysis (simplified for now)
-    logger.info("Step 4.5: Phase 2 Cross-Asset Correlation Analysis...")
-    correlation_analysis = {
-        'correlation_data': {}
-    }
-    # Pre-compute correlation data for top symbols (performance optimization)
-    for symbol in symbols[:20]:  # Limit to top 20 for performance
-        try:
-            correlation_result = await cross_asset_correlation_analysis(
-                symbol=symbol,
-                lookback_days=90
-            )
-            correlation_analysis['correlation_data'][symbol] = correlation_result
-        except Exception as e:
-            logger.warning(f"Correlation analysis failed for {symbol}: {e}")
-            correlation_analysis['correlation_data'][symbol] = {}
-
-    # Step 5: Analyze options (enhanced version of original algorithm with Phase 2)
-    logger.info("Step 5: Enhanced options analysis...")
-    all_options = []
-
-    # Get valid expiration dates
-    valid_expirations = []
-    for days_ahead in range(1, max_days_to_expiry + 1):
-        future_date = current_time + datetime.timedelta(days=days_ahead)
-        if future_date.weekday() < 5:  # Business days only
-            valid_expirations.append(future_date.strftime('%Y-%m-%d'))
-
-    async def analyze_symbol_enhanced(symbol: str) -> List[Dict[str, Any]]:
-        symbol_options = []
-        try:
-            # Use Polygon.io for quote (NO YFINANCE)
-            # Add delay to respect rate limits (Polygon.io has strict burst limits)
-            await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
-            quotes = await polygon_client.get_quote([symbol])
-            if not quotes or symbol not in quotes:
-                logger.warning(f"Could not get quote for {symbol} from Polygon.io")
-                return []
-
-            current_price = quotes[symbol]['price']
-            if not current_price or current_price == 0:
-                return []
-
-            # Get available expirations from Polygon.io
-            await asyncio.sleep(1.5)  # Rate limit delay
-            all_expirations = await polygon_client.get_expirations(symbol)
-            if not all_expirations:
-                return []
-
-            available_dates = [date for date in all_expirations if date in valid_expirations]
-            if not available_dates:
-                return []
-
-            # Get sentiment, flow, and correlation data for this symbol
-            symbol_sentiment = sentiment_analysis['sentiment_data'].get(symbol, {})
-            symbol_flow = flow_analysis['flow_data'].get(symbol, {})
-            symbol_correlation = correlation_analysis['correlation_data'].get(symbol, {})
-
-            for expiration_date in available_dates:  # Analyze ALL expirations ≤30 days for complete dataset
-                try:
-                    exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
-                    days_to_exp = (exp_date - current_time).days
-                    time_to_expiration = days_to_exp / 365.0
-
-                    if days_to_exp > max_days_to_expiry:
+        # Step 1: Market Regime Detection
+        logger.info("Step 1: Detecting market regime...")
+        market_regime = await detect_market_regime()
+        regime = market_regime['overall_regime']
+        regime_confidence = market_regime['regime_confidence']
+    
+        # Step 2: Adapt criteria based on market regime
+        logger.info(f"Step 2: Adapting criteria for {regime} market regime...")
+        if regime == "high_volatility":
+            # In high vol, lower probability expectations but higher profit potential
+            adapted_probability = max(0.30, target_probability - 0.10)
+            adapted_profit = target_profit_potential + 0.05
+            adapted_risk = min(8, target_risk_level + 1)
+        elif regime == "bearish":
+            # In bear market, be more conservative
+            adapted_probability = max(0.35, target_probability - 0.05)
+            adapted_profit = target_profit_potential + 0.03
+            adapted_risk = max(4, target_risk_level - 1)
+        elif regime == "bullish":
+            # In bull market, can be slightly more aggressive
+            adapted_probability = max(0.40, target_probability - 0.03)
+            adapted_profit = target_profit_potential
+            adapted_risk = min(7, target_risk_level + 1)
+        else:  # sideways or unknown
+            adapted_probability = target_probability
+            adapted_profit = target_profit_potential
+            adapted_risk = target_risk_level
+    
+        logger.info(f"Adapted criteria: P={adapted_probability:.1%}, Profit={adapted_profit:.1%}, Risk={adapted_risk}")
+    
+        # Step 3: Get market sentiment for top symbols
+        logger.info("Step 3: Analyzing real-time market sentiment...")
+        sentiment_analysis = await get_realtime_market_sentiment(symbols[:50])  # Analyze top 50 for performance
+    
+        # Step 4: Get options flow analysis
+        logger.info("Step 4: Analyzing options flow...")
+        flow_analysis = await get_options_flow_analysis(symbols[:20])  # Top 20 for flow analysis
+    
+        # Step 4.5: PHASE 2 Cross-Asset Correlation Analysis (simplified for now)
+        logger.info("Step 4.5: Phase 2 Cross-Asset Correlation Analysis...")
+        correlation_analysis = {
+            'correlation_data': {}
+        }
+        # Pre-compute correlation data for top symbols (performance optimization)
+        for symbol in symbols[:20]:  # Limit to top 20 for performance
+            try:
+                correlation_result = await cross_asset_correlation_analysis(
+                    symbol=symbol,
+                    lookback_days=90
+                )
+                correlation_analysis['correlation_data'][symbol] = correlation_result
+            except Exception as e:
+                logger.warning(f"Correlation analysis failed for {symbol}: {e}")
+                correlation_analysis['correlation_data'][symbol] = {}
+    
+        # Step 5: Analyze options (enhanced version of original algorithm with Phase 2)
+        logger.info("Step 5: Enhanced options analysis...")
+        all_options = []
+    
+        # Get valid expiration dates
+        valid_expirations = []
+        for days_ahead in range(1, max_days_to_expiry + 1):
+            future_date = current_time + datetime.timedelta(days=days_ahead)
+            if future_date.weekday() < 5:  # Business days only
+                valid_expirations.append(future_date.strftime('%Y-%m-%d'))
+    
+        async def analyze_symbol_enhanced(symbol: str) -> List[Dict[str, Any]]:
+            symbol_options = []
+            try:
+                # Use Polygon.io for quote (NO YFINANCE)
+                # Add delay to respect rate limits (Polygon.io has strict burst limits)
+                await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
+                quotes = await polygon_client.get_quote([symbol])
+                if not quotes or symbol not in quotes:
+                    logger.warning(f"Could not get quote for {symbol} from Polygon.io")
+                    return []
+    
+                current_price = quotes[symbol]['price']
+                if not current_price or current_price == 0:
+                    return []
+    
+                # Get available expirations from Polygon.io
+                await asyncio.sleep(1.5)  # Rate limit delay
+                all_expirations = await polygon_client.get_expirations(symbol)
+                if not all_expirations:
+                    return []
+    
+                available_dates = [date for date in all_expirations if date in valid_expirations]
+                if not available_dates:
+                    return []
+    
+                # Get sentiment, flow, and correlation data for this symbol
+                symbol_sentiment = sentiment_analysis['sentiment_data'].get(symbol, {})
+                symbol_flow = flow_analysis['flow_data'].get(symbol, {})
+                symbol_correlation = correlation_analysis['correlation_data'].get(symbol, {})
+    
+                for expiration_date in available_dates:  # Analyze ALL expirations ≤30 days for complete dataset
+                    try:
+                        exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
+                        days_to_exp = (exp_date - current_time).days
+                        time_to_expiration = days_to_exp / 365.0
+    
+                        if days_to_exp > max_days_to_expiry:
+                            continue
+    
+                        # Get options chain from Polygon.io (NO YFINANCE)
+                        # Add delay to respect rate limits
+                        await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
+                        # Filter for OTM calls (strikes > current price)
+                        options_data = await polygon_client.get_options_chain(
+                            symbol,
+                            expiration_date,
+                            min_strike=current_price * 1.01  # Start slightly above current to get OTM options
+                        )
+                        if 'calls' not in options_data or options_data['calls'].empty:
+                            continue
+    
+                        calls = options_data['calls']
+    
+                        logger.info(f"🔍 {symbol} {expiration_date}: Processing {len(calls)} calls, current_price=${current_price}")
+    
+                        for _, option in calls.iterrows():
+                            strike = option.get('strike', 0)
+                            volume = option.get('volume', 0) or 0
+                            iv = option.get('implied_volatility', 0) or 0
+                            bid = option.get('bid', 0) or 0
+                            ask = option.get('ask', 0) or 0
+    
+                            # Enhanced filtering - relaxed requirements
+                            # Note: Polygon.io sometimes doesn't include IV (greeks empty)
+                            min_volume = 5 if always_show_results else 10  # Relaxed from 10/25
+                            min_iv = 0.001 if always_show_results else 0.01  # Very low threshold, will calculate ourselves if 0
+    
+                            # Debug: Log first few options to see what we're working with
+                            if _ < 3:  # Log first 3 options per expiration
+                                logger.info(f"  Option ${strike}: vol={volume}, IV={iv:.4f}, bid={bid}, ask={ask}")
+    
+                            # Filter: OTM calls with some volume and either has IV or we can calculate it
+                            # Note: bid/ask are close prices (Polygon doesn't provide real bid/ask in this endpoint)
+                            if (strike > current_price and volume >= min_volume and
+                                (iv >= min_iv or iv == 0) and bid > 0):
+    
+                                # Enhanced analysis with sentiment
+                                advanced_result = await advanced_engine.analyze_with_novel_techniques(
+                                    symbol, strike, expiration_date
+                                )
+    
+                                # PHASE 2: Advanced Multi-Scenario Monte Carlo Analysis
+                                phase2_monte_carlo = await multi_scenario_monte_carlo_analysis(
+                                    current_price=current_price,
+                                    strike=strike,
+                                    time_to_expiration=time_to_expiration,
+                                    volatility=iv,
+                                    risk_free_rate=0.05,
+                                    num_simulations=5000,  # Reduced for performance in batch analysis
+                                    market_regime=regime
+                                )
+    
+                                # PHASE 2: Historical Pattern Recognition
+                                phase2_patterns = await historical_pattern_recognition(
+                                    symbol=symbol,
+                                    lookback_days=90,  # Shorter for performance
+                                    pattern_type='price_momentum'
+                                )
+    
+                                # PHASE 2: Advanced Volatility Forecasting
+                                phase2_volatility = await advanced_volatility_forecasting(
+                                    symbol=symbol,
+                                    forecast_days=days_to_exp,
+                                    current_iv=iv
+                                )
+    
+                                # PHASE 2: Event-Driven Analysis (for upcoming catalysts)
+                                phase2_events = await event_driven_analysis(
+                                    symbol=symbol,
+                                    days_ahead=days_to_exp
+                                )
+    
+                                # PROFIT MAXIMIZATION: Insider Trading Analysis
+                                insider_data = await get_insider_trading_data(symbol)
+    
+                                # PROFIT MAXIMIZATION: Gamma Squeeze Analysis
+                                gamma_data = await get_options_gamma_squeeze_probability(symbol, current_price)
+    
+                                # PROFIT MAXIMIZATION: Short Interest Analysis
+                                short_data = await get_short_interest_data(symbol)
+    
+                                # Combine Phase 1 and Phase 2 ITM probabilities
+                                base_itm_prob = advanced_result.get('final_analysis', {}).get('final_itm_probability', 0.5)
+    
+                                # Phase 2 Monte Carlo weighted probability
+                                mc_bull_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bull', 0.5)
+                                mc_bear_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bear', 0.3)
+                                mc_sideways_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('sideways', 0.4)
+    
+                                # Weight by regime confidence
+                                if regime == 'bullish':
+                                    phase2_mc_prob = mc_bull_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bear_prob * 0.1
+                                elif regime == 'bearish':
+                                    phase2_mc_prob = mc_bear_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bull_prob * 0.1
+                                else:  # sideways or mixed
+                                    phase2_mc_prob = mc_sideways_prob * 0.5 + (mc_bull_prob + mc_bear_prob) * 0.25
+    
+                                # Pattern recognition probability adjustment
+                                pattern_confidence = phase2_patterns.get('best_match', {}).get('confidence', 0.5)
+                                pattern_adjustment = (pattern_confidence - 0.5) * 0.1  # ±5% max adjustment
+    
+                                # Volatility forecasting adjustment
+                                volatility_trend = phase2_volatility.get('forecast_trend', 'stable')
+                                vol_adjustment = 0.02 if volatility_trend == 'increasing' else (-0.02 if volatility_trend == 'decreasing' else 0)
+    
+                                # Event-driven analysis adjustment
+                                upcoming_events = phase2_events.get('events_analysis', {}).get(symbol, {})
+                                catalyst_impact = upcoming_events.get('composite_impact_score', 0.5)
+                                event_adjustment = (catalyst_impact - 0.5) * 0.08  # ±4% max adjustment for events
+    
+                                # Cross-asset correlation adjustment
+                                correlation_strength = symbol_correlation.get('market_correlation_strength', 0.5)
+                                correlation_direction = symbol_correlation.get('favorable_correlation_direction', 0.5)
+                                correlation_adjustment = (correlation_strength * correlation_direction - 0.25) * 0.06  # ±3% max
+    
+                                # PROFIT MAXIMIZATION ADJUSTMENTS
+                                # Insider trading boost - INSIDERS KNOW!
+                                insider_adjustment = insider_data.get('insider_sentiment', 0) * 0.15  # ±15% max for insider activity
+    
+                                # Gamma squeeze boost - EXPLOSIVE MOVES!
+                                gamma_boost = gamma_data.get('squeeze_probability', 0) * 0.20  # ±20% max for gamma squeeze
+    
+                                # Short squeeze boost - MASSIVE UPSIDE!
+                                short_squeeze_boost = short_data.get('squeeze_potential', 0) * 0.12  # ±12% max for short squeeze
+    
+                                # ENHANCED ITM probability with PROFIT MAXIMIZATION
+                                institutional_itm_prob = (
+                                    base_itm_prob * 0.20 +          # Phase 1 base (20%)
+                                    phase2_mc_prob * 0.25 +         # Phase 2 Monte Carlo (25%)
+                                    (base_itm_prob + pattern_adjustment) * 0.12 +  # Pattern recognition (12%)
+                                    (base_itm_prob + vol_adjustment) * 0.08 +      # Volatility forecasting (8%)
+                                    (base_itm_prob + event_adjustment) * 0.08 +    # Event-driven analysis (8%)
+                                    (base_itm_prob + correlation_adjustment) * 0.07 +  # Cross-asset correlation (7%)
+                                    (base_itm_prob + insider_adjustment) * 0.10 +   # INSIDER TRADING (10%)
+                                    (base_itm_prob + gamma_boost) * 0.07 +          # GAMMA SQUEEZE (7%)
+                                    (base_itm_prob + short_squeeze_boost) * 0.03    # SHORT SQUEEZE (3%)
+                                )
+    
+                                # Apply Phase 1 sentiment boost on top of Phase 2 analysis
+                                sentiment_boost = symbol_sentiment.get('composite_sentiment', 0) * 0.05  # Reduced to 5% max for institutional blend
+                                enhanced_itm_prob = apply_sentiment_adjustment(institutional_itm_prob, sentiment_boost)
+    
+                                option_price = (bid + ask) / 2
+                                profit_potential = calculate_profit_potential(
+                                    current_price, strike, option_price, time_to_expiration, iv
+                                )
+                                risk_level = calculate_risk_level(
+                                    current_price, strike, time_to_expiration, iv, volume
+                                )
+    
+                                # Enhanced composite score with sentiment and flow
+                                base_score = calculate_composite_score(
+                                    enhanced_itm_prob, profit_potential, risk_level,
+                                    days_to_exp, advanced_result.get('analysis_techniques', {})
+                                )
+    
+                                # PHASE 2: Additional scoring components
+                                # Monte Carlo scenario confidence boost
+                                mc_confidence = phase2_monte_carlo.get('confidence_metrics', {}).get('overall_confidence', 0.5)
+                                mc_multiplier = 1.0 + (mc_confidence - 0.5) * 0.2  # ±10% max
+    
+                                # Pattern recognition strength boost
+                                pattern_strength = phase2_patterns.get('best_match', {}).get('strength', 0.5)
+                                pattern_multiplier = 1.0 + (pattern_strength - 0.5) * 0.15  # ±7.5% max
+    
+                                # Volatility forecast accuracy boost
+                                vol_accuracy = phase2_volatility.get('forecast_accuracy', {}).get('confidence', 0.5)
+                                volatility_multiplier = 1.0 + (vol_accuracy - 0.5) * 0.1  # ±5% max
+    
+                                # Event catalyst strength boost
+                                event_strength = upcoming_events.get('catalyst_strength', 0.5)
+                                event_multiplier = 1.0 + (event_strength - 0.5) * 0.12  # ±6% max for catalyst events
+    
+                                # Cross-asset correlation strength boost
+                                correlation_favorability = symbol_correlation.get('overall_correlation_score', 0.5)
+                                correlation_multiplier = 1.0 + (correlation_favorability - 0.5) * 0.08  # ±4% max for correlation
+    
+                                # PROFIT MAXIMIZATION MULTIPLIERS
+                                # Insider activity multiplier - FOLLOW THE SMART MONEY
+                                insider_confidence = insider_data.get('confidence', 0)
+                                insider_multiplier = 1.0 + (insider_data.get('insider_sentiment', 0) * insider_confidence * 0.25)  # ±25% max
+    
+                                # Gamma squeeze multiplier - EXPLOSIVE POTENTIAL
+                                gamma_multiplier = 1.0 + (gamma_data.get('squeeze_probability', 0) * 0.30)  # ±30% max for gamma
+    
+                                # Short squeeze multiplier - MASSIVE UPSIDE POTENTIAL
+                                short_multiplier = 1.0 + (short_data.get('squeeze_potential', 0) * 0.20)  # ±20% max for short squeeze
+    
+                                # Apply all multipliers: Phase 1 + Phase 2 + PROFIT MAXIMIZATION
+                                sentiment_multiplier = 1.0 + (symbol_sentiment.get('composite_sentiment', 0) * 0.1)
+                                flow_multiplier = 1.0 + (symbol_flow.get('unusual_activity_score', 0) * 0.05)
+    
+                                # AGGRESSIVE PROFIT-FOCUSED SCORING
+                                institutional_score = (base_score *
+                                                      sentiment_multiplier *
+                                                      flow_multiplier *
+                                                      mc_multiplier *
+                                                      pattern_multiplier *
+                                                      volatility_multiplier *
+                                                      event_multiplier *
+                                                      correlation_multiplier *
+                                                      insider_multiplier *      # INSIDER EDGE
+                                                      gamma_multiplier *        # GAMMA SQUEEZE
+                                                      short_multiplier)         # SHORT SQUEEZE
+    
+                                greeks = calculate_black_scholes_greeks(
+                                    current_price, strike, time_to_expiration, iv, 0.05, 'call'
+                                )
+    
+                                symbol_options.append({
+                                    'symbol': symbol,
+                                    'current_price': current_price,
+                                    'strike': strike,
+                                    'option_price': option_price,
+                                    'expiration': expiration_date,
+                                    'days_to_expiration': days_to_exp,
+                                    'volume': int(volume),
+                                    'open_interest': int(option.get('openInterest', 0) or 0),
+                                    'implied_volatility': iv,
+                                    'bid': bid,
+                                    'ask': ask,
+                                    'itm_probability': enhanced_itm_prob,
+                                    'base_itm_probability': base_itm_prob,
+                                    'institutional_itm_probability': institutional_itm_prob,
+                                    'sentiment_adjustment': enhanced_itm_prob - institutional_itm_prob,
+                                    'profit_potential': profit_potential,
+                                    'risk_level': risk_level,
+                                    'composite_score': institutional_score,
+                                    'base_score': base_score,
+                                    'sentiment_multiplier': sentiment_multiplier,
+                                    'flow_multiplier': flow_multiplier,
+                                    'mc_multiplier': mc_multiplier,
+                                    'pattern_multiplier': pattern_multiplier,
+                                    'volatility_multiplier': volatility_multiplier,
+                                    'event_multiplier': event_multiplier,
+                                    'correlation_multiplier': correlation_multiplier,
+                                    'insider_multiplier': insider_multiplier,
+                                    'gamma_multiplier': gamma_multiplier,
+                                    'short_multiplier': short_multiplier,
+                                    'delta': greeks['delta'],
+                                    'gamma': greeks['gamma'],
+                                    'theta': greeks['theta'],
+                                    'vega': greeks['vega'],
+                                    'sentiment_data': symbol_sentiment,
+                                    'flow_data': symbol_flow,
+                                    # Phase 2 Advanced Analytics Data
+                                    'phase2_monte_carlo': {
+                                        'scenario_probabilities': phase2_monte_carlo.get('scenario_probabilities', {}),
+                                        'confidence_metrics': phase2_monte_carlo.get('confidence_metrics', {}),
+                                        'risk_metrics': phase2_monte_carlo.get('risk_metrics', {})
+                                    },
+                                    'phase2_patterns': {
+                                        'best_match': phase2_patterns.get('best_match', {}),
+                                        'pattern_type': phase2_patterns.get('pattern_type', 'price_momentum'),
+                                        'historical_outcomes': phase2_patterns.get('similar_patterns', [])[:3]  # Top 3 matches
+                                    },
+                                    'phase2_volatility': {
+                                        'forecast_trend': phase2_volatility.get('forecast_trend', 'stable'),
+                                        'forecast_accuracy': phase2_volatility.get('forecast_accuracy', {}),
+                                        'term_structure': phase2_volatility.get('term_structure_analysis', {}),
+                                        'volatility_regime': phase2_volatility.get('volatility_regime', 'normal')
+                                    },
+                                    'phase2_events': {
+                                        'upcoming_events': upcoming_events.get('upcoming_events', []),
+                                        'catalyst_strength': upcoming_events.get('catalyst_strength', 0.5),
+                                        'impact_timeline': upcoming_events.get('impact_timeline', {}),
+                                        'event_types_detected': upcoming_events.get('event_types', [])
+                                    },
+                                    'phase2_correlation': {
+                                        'market_correlation_strength': symbol_correlation.get('market_correlation_strength', 0.5),
+                                        'asset_class_correlations': symbol_correlation.get('asset_correlations', {}),
+                                        'regime_correlations': symbol_correlation.get('regime_analysis', {}),
+                                        'correlation_stability': symbol_correlation.get('correlation_stability', 0.5)
+                                    },
+                                    # PROFIT MAXIMIZATION DATA
+                                    'insider_trading': {
+                                        'insider_sentiment': insider_data.get('insider_sentiment', 0),
+                                        'net_activity': insider_data.get('net_insider_activity', 0),
+                                        'confidence': insider_data.get('confidence', 0),
+                                        'bullish_activity': insider_data.get('bullish_insider_activity', False),
+                                        'recent_trades': len(insider_data.get('insider_trades', []))
+                                    },
+                                    'gamma_squeeze': {
+                                        'squeeze_probability': gamma_data.get('squeeze_probability', 0),
+                                        'call_wall': gamma_data.get('call_wall', current_price),
+                                        'put_wall': gamma_data.get('put_wall', current_price),
+                                        'high_gamma_risk': gamma_data.get('high_gamma_risk', False)
+                                    },
+                                    'short_squeeze': {
+                                        'short_percent_float': short_data.get('short_percent_float', 0),
+                                        'squeeze_potential': short_data.get('squeeze_potential', 0),
+                                        'days_to_cover': short_data.get('days_to_cover', 0),
+                                        'high_short_interest': short_data.get('high_short_interest', False)
+                                    },
+                                    **advanced_result.get('analysis_techniques', {})
+                                })
+                            else:
+                                # Debug: Log why option was filtered out (only for first few)
+                                if _ < 3:  # Only log first 3 rejections per expiration
+                                    reasons = []
+                                    if strike <= current_price:
+                                        reasons.append(f"ITM/ATM (${strike} <= ${current_price})")
+                                    if volume < min_volume:
+                                        reasons.append(f"low_vol({volume} < {min_volume})")
+                                    if iv < min_iv and iv != 0:
+                                        reasons.append(f"low_IV({iv:.4f} < {min_iv})")
+                                    if bid <= 0:
+                                        reasons.append(f"no_price({bid})")
+                                    if not reasons:
+                                        reasons.append("unknown")
+                                    logger.info(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
+    
+                    except Exception as e:
+                        logger.warning(f"Error analyzing {symbol} {expiration_date}: {e}")
                         continue
-
-                    # Get options chain from Polygon.io (NO YFINANCE)
-                    # Add delay to respect rate limits
-                    await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
-                    # Filter for OTM calls (strikes > current price)
-                    options_data = await polygon_client.get_options_chain(
-                        symbol,
-                        expiration_date,
-                        min_strike=current_price * 1.01  # Start slightly above current to get OTM options
-                    )
-                    if 'calls' not in options_data or options_data['calls'].empty:
-                        continue
-
-                    calls = options_data['calls']
-
-                    logger.info(f"🔍 {symbol} {expiration_date}: Processing {len(calls)} calls, current_price=${current_price}")
-
-                    for _, option in calls.iterrows():
-                        strike = option.get('strike', 0)
-                        volume = option.get('volume', 0) or 0
-                        iv = option.get('implied_volatility', 0) or 0
-                        bid = option.get('bid', 0) or 0
-                        ask = option.get('ask', 0) or 0
-
-                        # Enhanced filtering - relaxed requirements
-                        # Note: Polygon.io sometimes doesn't include IV (greeks empty)
-                        min_volume = 5 if always_show_results else 10  # Relaxed from 10/25
-                        min_iv = 0.001 if always_show_results else 0.01  # Very low threshold, will calculate ourselves if 0
-
-                        # Debug: Log first few options to see what we're working with
-                        if _ < 3:  # Log first 3 options per expiration
-                            logger.info(f"  Option ${strike}: vol={volume}, IV={iv:.4f}, bid={bid}, ask={ask}")
-
-                        # Filter: OTM calls with some volume and either has IV or we can calculate it
-                        # Note: bid/ask are close prices (Polygon doesn't provide real bid/ask in this endpoint)
-                        if (strike > current_price and volume >= min_volume and
-                            (iv >= min_iv or iv == 0) and bid > 0):
-
-                            # Enhanced analysis with sentiment
-                            advanced_result = await advanced_engine.analyze_with_novel_techniques(
-                                symbol, strike, expiration_date
-                            )
-
-                            # PHASE 2: Advanced Multi-Scenario Monte Carlo Analysis
-                            phase2_monte_carlo = await multi_scenario_monte_carlo_analysis(
-                                current_price=current_price,
-                                strike=strike,
-                                time_to_expiration=time_to_expiration,
-                                volatility=iv,
-                                risk_free_rate=0.05,
-                                num_simulations=5000,  # Reduced for performance in batch analysis
-                                market_regime=regime
-                            )
-
-                            # PHASE 2: Historical Pattern Recognition
-                            phase2_patterns = await historical_pattern_recognition(
-                                symbol=symbol,
-                                lookback_days=90,  # Shorter for performance
-                                pattern_type='price_momentum'
-                            )
-
-                            # PHASE 2: Advanced Volatility Forecasting
-                            phase2_volatility = await advanced_volatility_forecasting(
-                                symbol=symbol,
-                                forecast_days=days_to_exp,
-                                current_iv=iv
-                            )
-
-                            # PHASE 2: Event-Driven Analysis (for upcoming catalysts)
-                            phase2_events = await event_driven_analysis(
-                                symbol=symbol,
-                                days_ahead=days_to_exp
-                            )
-
-                            # PROFIT MAXIMIZATION: Insider Trading Analysis
-                            insider_data = await get_insider_trading_data(symbol)
-
-                            # PROFIT MAXIMIZATION: Gamma Squeeze Analysis
-                            gamma_data = await get_options_gamma_squeeze_probability(symbol, current_price)
-
-                            # PROFIT MAXIMIZATION: Short Interest Analysis
-                            short_data = await get_short_interest_data(symbol)
-
-                            # Combine Phase 1 and Phase 2 ITM probabilities
-                            base_itm_prob = advanced_result.get('final_analysis', {}).get('final_itm_probability', 0.5)
-
-                            # Phase 2 Monte Carlo weighted probability
-                            mc_bull_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bull', 0.5)
-                            mc_bear_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('bear', 0.3)
-                            mc_sideways_prob = phase2_monte_carlo.get('scenario_probabilities', {}).get('sideways', 0.4)
-
-                            # Weight by regime confidence
-                            if regime == 'bullish':
-                                phase2_mc_prob = mc_bull_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bear_prob * 0.1
-                            elif regime == 'bearish':
-                                phase2_mc_prob = mc_bear_prob * 0.6 + mc_sideways_prob * 0.3 + mc_bull_prob * 0.1
-                            else:  # sideways or mixed
-                                phase2_mc_prob = mc_sideways_prob * 0.5 + (mc_bull_prob + mc_bear_prob) * 0.25
-
-                            # Pattern recognition probability adjustment
-                            pattern_confidence = phase2_patterns.get('best_match', {}).get('confidence', 0.5)
-                            pattern_adjustment = (pattern_confidence - 0.5) * 0.1  # ±5% max adjustment
-
-                            # Volatility forecasting adjustment
-                            volatility_trend = phase2_volatility.get('forecast_trend', 'stable')
-                            vol_adjustment = 0.02 if volatility_trend == 'increasing' else (-0.02 if volatility_trend == 'decreasing' else 0)
-
-                            # Event-driven analysis adjustment
-                            upcoming_events = phase2_events.get('events_analysis', {}).get(symbol, {})
-                            catalyst_impact = upcoming_events.get('composite_impact_score', 0.5)
-                            event_adjustment = (catalyst_impact - 0.5) * 0.08  # ±4% max adjustment for events
-
-                            # Cross-asset correlation adjustment
-                            correlation_strength = symbol_correlation.get('market_correlation_strength', 0.5)
-                            correlation_direction = symbol_correlation.get('favorable_correlation_direction', 0.5)
-                            correlation_adjustment = (correlation_strength * correlation_direction - 0.25) * 0.06  # ±3% max
-
-                            # PROFIT MAXIMIZATION ADJUSTMENTS
-                            # Insider trading boost - INSIDERS KNOW!
-                            insider_adjustment = insider_data.get('insider_sentiment', 0) * 0.15  # ±15% max for insider activity
-
-                            # Gamma squeeze boost - EXPLOSIVE MOVES!
-                            gamma_boost = gamma_data.get('squeeze_probability', 0) * 0.20  # ±20% max for gamma squeeze
-
-                            # Short squeeze boost - MASSIVE UPSIDE!
-                            short_squeeze_boost = short_data.get('squeeze_potential', 0) * 0.12  # ±12% max for short squeeze
-
-                            # ENHANCED ITM probability with PROFIT MAXIMIZATION
-                            institutional_itm_prob = (
-                                base_itm_prob * 0.20 +          # Phase 1 base (20%)
-                                phase2_mc_prob * 0.25 +         # Phase 2 Monte Carlo (25%)
-                                (base_itm_prob + pattern_adjustment) * 0.12 +  # Pattern recognition (12%)
-                                (base_itm_prob + vol_adjustment) * 0.08 +      # Volatility forecasting (8%)
-                                (base_itm_prob + event_adjustment) * 0.08 +    # Event-driven analysis (8%)
-                                (base_itm_prob + correlation_adjustment) * 0.07 +  # Cross-asset correlation (7%)
-                                (base_itm_prob + insider_adjustment) * 0.10 +   # INSIDER TRADING (10%)
-                                (base_itm_prob + gamma_boost) * 0.07 +          # GAMMA SQUEEZE (7%)
-                                (base_itm_prob + short_squeeze_boost) * 0.03    # SHORT SQUEEZE (3%)
-                            )
-
-                            # Apply Phase 1 sentiment boost on top of Phase 2 analysis
-                            sentiment_boost = symbol_sentiment.get('composite_sentiment', 0) * 0.05  # Reduced to 5% max for institutional blend
-                            enhanced_itm_prob = apply_sentiment_adjustment(institutional_itm_prob, sentiment_boost)
-
-                            option_price = (bid + ask) / 2
-                            profit_potential = calculate_profit_potential(
-                                current_price, strike, option_price, time_to_expiration, iv
-                            )
-                            risk_level = calculate_risk_level(
-                                current_price, strike, time_to_expiration, iv, volume
-                            )
-
-                            # Enhanced composite score with sentiment and flow
-                            base_score = calculate_composite_score(
-                                enhanced_itm_prob, profit_potential, risk_level,
-                                days_to_exp, advanced_result.get('analysis_techniques', {})
-                            )
-
-                            # PHASE 2: Additional scoring components
-                            # Monte Carlo scenario confidence boost
-                            mc_confidence = phase2_monte_carlo.get('confidence_metrics', {}).get('overall_confidence', 0.5)
-                            mc_multiplier = 1.0 + (mc_confidence - 0.5) * 0.2  # ±10% max
-
-                            # Pattern recognition strength boost
-                            pattern_strength = phase2_patterns.get('best_match', {}).get('strength', 0.5)
-                            pattern_multiplier = 1.0 + (pattern_strength - 0.5) * 0.15  # ±7.5% max
-
-                            # Volatility forecast accuracy boost
-                            vol_accuracy = phase2_volatility.get('forecast_accuracy', {}).get('confidence', 0.5)
-                            volatility_multiplier = 1.0 + (vol_accuracy - 0.5) * 0.1  # ±5% max
-
-                            # Event catalyst strength boost
-                            event_strength = upcoming_events.get('catalyst_strength', 0.5)
-                            event_multiplier = 1.0 + (event_strength - 0.5) * 0.12  # ±6% max for catalyst events
-
-                            # Cross-asset correlation strength boost
-                            correlation_favorability = symbol_correlation.get('overall_correlation_score', 0.5)
-                            correlation_multiplier = 1.0 + (correlation_favorability - 0.5) * 0.08  # ±4% max for correlation
-
-                            # PROFIT MAXIMIZATION MULTIPLIERS
-                            # Insider activity multiplier - FOLLOW THE SMART MONEY
-                            insider_confidence = insider_data.get('confidence', 0)
-                            insider_multiplier = 1.0 + (insider_data.get('insider_sentiment', 0) * insider_confidence * 0.25)  # ±25% max
-
-                            # Gamma squeeze multiplier - EXPLOSIVE POTENTIAL
-                            gamma_multiplier = 1.0 + (gamma_data.get('squeeze_probability', 0) * 0.30)  # ±30% max for gamma
-
-                            # Short squeeze multiplier - MASSIVE UPSIDE POTENTIAL
-                            short_multiplier = 1.0 + (short_data.get('squeeze_potential', 0) * 0.20)  # ±20% max for short squeeze
-
-                            # Apply all multipliers: Phase 1 + Phase 2 + PROFIT MAXIMIZATION
-                            sentiment_multiplier = 1.0 + (symbol_sentiment.get('composite_sentiment', 0) * 0.1)
-                            flow_multiplier = 1.0 + (symbol_flow.get('unusual_activity_score', 0) * 0.05)
-
-                            # AGGRESSIVE PROFIT-FOCUSED SCORING
-                            institutional_score = (base_score *
-                                                  sentiment_multiplier *
-                                                  flow_multiplier *
-                                                  mc_multiplier *
-                                                  pattern_multiplier *
-                                                  volatility_multiplier *
-                                                  event_multiplier *
-                                                  correlation_multiplier *
-                                                  insider_multiplier *      # INSIDER EDGE
-                                                  gamma_multiplier *        # GAMMA SQUEEZE
-                                                  short_multiplier)         # SHORT SQUEEZE
-
-                            greeks = calculate_black_scholes_greeks(
-                                current_price, strike, time_to_expiration, iv, 0.05, 'call'
-                            )
-
-                            symbol_options.append({
-                                'symbol': symbol,
-                                'current_price': current_price,
-                                'strike': strike,
-                                'option_price': option_price,
-                                'expiration': expiration_date,
-                                'days_to_expiration': days_to_exp,
-                                'volume': int(volume),
-                                'open_interest': int(option.get('openInterest', 0) or 0),
-                                'implied_volatility': iv,
-                                'bid': bid,
-                                'ask': ask,
-                                'itm_probability': enhanced_itm_prob,
-                                'base_itm_probability': base_itm_prob,
-                                'institutional_itm_probability': institutional_itm_prob,
-                                'sentiment_adjustment': enhanced_itm_prob - institutional_itm_prob,
-                                'profit_potential': profit_potential,
-                                'risk_level': risk_level,
-                                'composite_score': institutional_score,
-                                'base_score': base_score,
-                                'sentiment_multiplier': sentiment_multiplier,
-                                'flow_multiplier': flow_multiplier,
-                                'mc_multiplier': mc_multiplier,
-                                'pattern_multiplier': pattern_multiplier,
-                                'volatility_multiplier': volatility_multiplier,
-                                'event_multiplier': event_multiplier,
-                                'correlation_multiplier': correlation_multiplier,
-                                'insider_multiplier': insider_multiplier,
-                                'gamma_multiplier': gamma_multiplier,
-                                'short_multiplier': short_multiplier,
-                                'delta': greeks['delta'],
-                                'gamma': greeks['gamma'],
-                                'theta': greeks['theta'],
-                                'vega': greeks['vega'],
-                                'sentiment_data': symbol_sentiment,
-                                'flow_data': symbol_flow,
-                                # Phase 2 Advanced Analytics Data
-                                'phase2_monte_carlo': {
-                                    'scenario_probabilities': phase2_monte_carlo.get('scenario_probabilities', {}),
-                                    'confidence_metrics': phase2_monte_carlo.get('confidence_metrics', {}),
-                                    'risk_metrics': phase2_monte_carlo.get('risk_metrics', {})
-                                },
-                                'phase2_patterns': {
-                                    'best_match': phase2_patterns.get('best_match', {}),
-                                    'pattern_type': phase2_patterns.get('pattern_type', 'price_momentum'),
-                                    'historical_outcomes': phase2_patterns.get('similar_patterns', [])[:3]  # Top 3 matches
-                                },
-                                'phase2_volatility': {
-                                    'forecast_trend': phase2_volatility.get('forecast_trend', 'stable'),
-                                    'forecast_accuracy': phase2_volatility.get('forecast_accuracy', {}),
-                                    'term_structure': phase2_volatility.get('term_structure_analysis', {}),
-                                    'volatility_regime': phase2_volatility.get('volatility_regime', 'normal')
-                                },
-                                'phase2_events': {
-                                    'upcoming_events': upcoming_events.get('upcoming_events', []),
-                                    'catalyst_strength': upcoming_events.get('catalyst_strength', 0.5),
-                                    'impact_timeline': upcoming_events.get('impact_timeline', {}),
-                                    'event_types_detected': upcoming_events.get('event_types', [])
-                                },
-                                'phase2_correlation': {
-                                    'market_correlation_strength': symbol_correlation.get('market_correlation_strength', 0.5),
-                                    'asset_class_correlations': symbol_correlation.get('asset_correlations', {}),
-                                    'regime_correlations': symbol_correlation.get('regime_analysis', {}),
-                                    'correlation_stability': symbol_correlation.get('correlation_stability', 0.5)
-                                },
-                                # PROFIT MAXIMIZATION DATA
-                                'insider_trading': {
-                                    'insider_sentiment': insider_data.get('insider_sentiment', 0),
-                                    'net_activity': insider_data.get('net_insider_activity', 0),
-                                    'confidence': insider_data.get('confidence', 0),
-                                    'bullish_activity': insider_data.get('bullish_insider_activity', False),
-                                    'recent_trades': len(insider_data.get('insider_trades', []))
-                                },
-                                'gamma_squeeze': {
-                                    'squeeze_probability': gamma_data.get('squeeze_probability', 0),
-                                    'call_wall': gamma_data.get('call_wall', current_price),
-                                    'put_wall': gamma_data.get('put_wall', current_price),
-                                    'high_gamma_risk': gamma_data.get('high_gamma_risk', False)
-                                },
-                                'short_squeeze': {
-                                    'short_percent_float': short_data.get('short_percent_float', 0),
-                                    'squeeze_potential': short_data.get('squeeze_potential', 0),
-                                    'days_to_cover': short_data.get('days_to_cover', 0),
-                                    'high_short_interest': short_data.get('high_short_interest', False)
-                                },
-                                **advanced_result.get('analysis_techniques', {})
-                            })
-                        else:
-                            # Debug: Log why option was filtered out (only for first few)
-                            if _ < 3:  # Only log first 3 rejections per expiration
-                                reasons = []
-                                if strike <= current_price:
-                                    reasons.append(f"ITM/ATM (${strike} <= ${current_price})")
-                                if volume < min_volume:
-                                    reasons.append(f"low_vol({volume} < {min_volume})")
-                                if iv < min_iv and iv != 0:
-                                    reasons.append(f"low_IV({iv:.4f} < {min_iv})")
-                                if bid <= 0:
-                                    reasons.append(f"no_price({bid})")
-                                if not reasons:
-                                    reasons.append("unknown")
-                                logger.info(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
-
-                except Exception as e:
-                    logger.warning(f"Error analyzing {symbol} {expiration_date}: {e}")
-                    continue
-
-        except Exception as e:
-            logger.warning(f"Error analyzing symbol {symbol}: {e}")
-
-        return symbol_options
-
-    # Process symbols in batches to avoid rate limiting
-    all_results = []
-
-    logger.info(f"📊 Analyzing {len(symbols)} symbols sequentially (complete dataset for each symbol)")
-
-    # Process symbols ONE AT A TIME for complete dataset analysis
-    for idx, symbol in enumerate(symbols, 1):
-        logger.info(f"🔍 Analyzing {symbol} ({idx}/{len(symbols)}) - scanning ALL options ≤30 days...")
-
-        try:
-            symbol_results = await analyze_symbol_enhanced(symbol)
-
-            if isinstance(symbol_results, Exception):
-                logger.error(f"❌ {symbol}: Error - {symbol_results}")
+    
+            except Exception as e:
+                logger.warning(f"Error analyzing symbol {symbol}: {e}")
+    
+            return symbol_options
+    
+        # Process symbols in batches to avoid rate limiting
+        all_results = []
+    
+        logger.info(f"📊 Analyzing {len(symbols)} symbols sequentially (complete dataset for each symbol)")
+    
+        # Process symbols ONE AT A TIME for complete dataset analysis
+        for idx, symbol in enumerate(symbols, 1):
+            logger.info(f"🔍 Analyzing {symbol} ({idx}/{len(symbols)}) - scanning ALL options ≤30 days...")
+    
+            try:
+                symbol_results = await analyze_symbol_enhanced(symbol)
+    
+                if isinstance(symbol_results, Exception):
+                    logger.error(f"❌ {symbol}: Error - {symbol_results}")
+                    all_results.append([])
+                else:
+                    num_options = len(symbol_results) if symbol_results else 0
+                    logger.info(f"✅ {symbol}: Found {num_options} options")
+                    all_results.append(symbol_results)
+            except Exception as e:
+                logger.error(f"❌ {symbol}: Exception - {e}")
                 all_results.append([])
+    
+            # Extra delay between symbols for rate limit safety
+            if idx < len(symbols):
+                await asyncio.sleep(2.0)  # 2 seconds breathing room between symbols
+    
+        results = all_results
+    
+        for result in results:
+            if isinstance(result, list):
+                all_options.extend(result)
             else:
-                num_options = len(symbol_results) if symbol_results else 0
-                logger.info(f"✅ {symbol}: Found {num_options} options")
-                all_results.append(symbol_results)
-        except Exception as e:
-            logger.error(f"❌ {symbol}: Exception - {e}")
-            all_results.append([])
-
-        # Extra delay between symbols for rate limit safety
-        if idx < len(symbols):
-            await asyncio.sleep(2.0)  # 2 seconds breathing room between symbols
-
-    results = all_results
-
-    for result in results:
-        if isinstance(result, list):
-            all_options.extend(result)
-        else:
-            logger.warning(f"Task failed: {result}")
-
-    logger.info(f"Found {len(all_options)} total options")
-
-    # Step 6: Rank and select results
-    if not all_options:
-        return {
-            'smart_picks_analysis': {
-                'total_options_analyzed': 0,
-                'total_options_found': 0,
-                'ideal_criteria_met': 0,
-                'analysis_timestamp': time.time(),
-                'market_context': {
-                    'regime': regime,
-                    'regime_confidence': regime_confidence,
-                    'message': 'No options data available - markets may be closed or symbols invalid'
-                },
-                'criteria': {
-                    'target_days_to_expiry': max_days_to_expiry,
-                    'target_profit_potential': target_profit_potential,
-                    'target_probability': target_probability,
-                    'target_risk_level': target_risk_level,
-                    'adapted_probability': adapted_probability,
-                    'adapted_profit': adapted_profit,
-                    'adapted_risk': adapted_risk
-                },
-                'optimal_options': [],
-                'summary_stats': {
-                    'average_composite_score': 0.0,
-                    'average_itm_probability': 0.0,
-                    'average_profit_potential': 0.0,
-                    'average_risk_level': 0.0,
-                    'average_days_to_expiration': 0.0
-                },
-                'processing_time': time.time() - start_time
-            }
-        }
-
-    # Sort by enhanced composite score
-    all_options.sort(key=lambda x: x['composite_score'], reverse=True)
-
-    # Categorize options
-    ideal_options = []
-    good_options = []
-    acceptable_options = []
-
-    for opt in all_options:
-        if (opt['itm_probability'] >= target_probability and
-            opt['profit_potential'] >= target_profit_potential and
-            opt['risk_level'] <= target_risk_level):
-            ideal_options.append(opt)
-        elif (opt['itm_probability'] >= adapted_probability and
-              opt['profit_potential'] >= adapted_profit and
-              opt['risk_level'] <= adapted_risk):
-            good_options.append(opt)
-        else:
-            acceptable_options.append(opt)
-
-    # Select final results: prioritize ideal, then good, then acceptable
-    final_options = []
-    final_options.extend(ideal_options[:max_results])
-
-    if len(final_options) < max_results:
-        remaining = max_results - len(final_options)
-        final_options.extend(good_options[:remaining])
-
-    if len(final_options) < max_results and always_show_results:
-        remaining = max_results - len(final_options)
-        final_options.extend(acceptable_options[:remaining])
-
-    # Add ranking
-    for i, opt in enumerate(final_options, 1):
-        opt['rank'] = i
-        opt['category'] = ('ideal' if opt in ideal_options else
-                          'adapted' if opt in good_options else 'acceptable')
-
-    # Calculate summary statistics
-    if final_options:
-        avg_score = np.mean([opt['composite_score'] for opt in final_options])
-        avg_prob = np.mean([opt['itm_probability'] for opt in final_options])
-        avg_profit = np.mean([opt['profit_potential'] for opt in final_options])
-        avg_risk = np.mean([opt['risk_level'] for opt in final_options])
-        avg_days = np.mean([opt['days_to_expiration'] for opt in final_options])
-    else:
-        avg_score = avg_prob = avg_profit = avg_risk = avg_days = 0.0
-
-    # Generate market context message
-    context_message = f"{regime.title()} market regime detected"
-    if regime_confidence > 0.7:
-        context_message += f" (High confidence: {regime_confidence:.1%})"
-    else:
-        context_message += f" (Moderate confidence: {regime_confidence:.1%})"
-
-    if len(ideal_options) == 0 and len(final_options) > 0:
-        context_message += f". Showing best available options with adapted criteria due to current market conditions."
-
-    analysis_time = time.time() - start_time
-
-    return {
-        'smart_picks_analysis': {
-            'total_options_analyzed': len(all_options),
-            'total_options_found': len(final_options),
-            'ideal_criteria_met': len(ideal_options),
-            'adapted_criteria_met': len(good_options),
-            'analysis_timestamp': time.time(),
-            'market_context': {
-                'regime': regime,
-                'regime_confidence': regime_confidence,
-                'message': context_message,
-                'sentiment_analyzed_symbols': len(sentiment_analysis['sentiment_data']),
-                'flow_analyzed_symbols': len(flow_analysis['flow_data']),
-                'phase2_analytics': {
-                    'correlation_analyzed_symbols': len(correlation_analysis['correlation_data']),
-                    'analytics_enabled': ['multi_scenario_monte_carlo', 'pattern_recognition', 'volatility_forecasting', 'event_driven', 'cross_asset_correlation'],
-                    'institutional_grade_features': True,
-                    'advanced_probability_models': 5
+                logger.warning(f"Task failed: {result}")
+    
+        logger.info(f"Found {len(all_options)} total options")
+    
+        # Step 6: Rank and select results
+        if not all_options:
+            return {
+                'success': True,
+                'data': {
+                    'smart_picks_analysis': {
+                        'total_options_analyzed': 0,
+                        'total_options_found': 0,
+                        'ideal_criteria_met': 0,
+                        'analysis_timestamp': time.time(),
+                        'market_context': {
+                            'regime': regime,
+                            'regime_confidence': regime_confidence,
+                            'message': 'No options data available - markets may be closed or symbols invalid'
+                        },
+                        'criteria': {
+                            'target_days_to_expiry': max_days_to_expiry,
+                            'target_profit_potential': target_profit_potential,
+                            'target_probability': target_probability,
+                            'target_risk_level': target_risk_level,
+                            'adapted_probability': adapted_probability,
+                            'adapted_profit': adapted_profit,
+                            'adapted_risk': adapted_risk
+                        },
+                        'optimal_options': [],
+                        'summary_stats': {
+                            'average_composite_score': 0.0,
+                            'average_itm_probability': 0.0,
+                            'average_profit_potential': 0.0,
+                            'average_risk_level': 0.0,
+                            'average_days_to_expiration': 0.0
+                        },
+                        'processing_time': time.time() - start_time
+                    }
                 }
-            },
-            'criteria': {
-                'target_days_to_expiry': max_days_to_expiry,
-                'target_profit_potential': target_profit_potential,
-                'target_probability': target_probability,
-                'target_risk_level': target_risk_level,
-                'adapted_probability': adapted_probability,
-                'adapted_profit': adapted_profit,
-                'adapted_risk': adapted_risk,
-                'always_show_results': always_show_results
-            },
-            'summary_stats': {
-                'average_composite_score': round(avg_score, 4),
-                'average_itm_probability': round(avg_prob, 4),
-                'average_profit_potential': round(avg_profit, 4),
-                'average_risk_level': round(avg_risk, 2),
-                'average_days_to_expiration': round(avg_days, 1)
-            },
-            'optimal_options': final_options,
-            'performance_metrics': {
-                'processing_time_seconds': round(analysis_time, 2),
-                'symbols_analyzed': len(symbols),
-                'options_per_second': round(len(all_options) / max(1, analysis_time), 1)
+            }
+    
+        # Sort by enhanced composite score
+        all_options.sort(key=lambda x: x['composite_score'], reverse=True)
+    
+        # Categorize options
+        ideal_options = []
+        good_options = []
+        acceptable_options = []
+    
+        for opt in all_options:
+            if (opt['itm_probability'] >= target_probability and
+                opt['profit_potential'] >= target_profit_potential and
+                opt['risk_level'] <= target_risk_level):
+                ideal_options.append(opt)
+            elif (opt['itm_probability'] >= adapted_probability and
+                  opt['profit_potential'] >= adapted_profit and
+                  opt['risk_level'] <= adapted_risk):
+                good_options.append(opt)
+            else:
+                acceptable_options.append(opt)
+    
+        # Select final results: prioritize ideal, then good, then acceptable
+        final_options = []
+        final_options.extend(ideal_options[:max_results])
+    
+        if len(final_options) < max_results:
+            remaining = max_results - len(final_options)
+            final_options.extend(good_options[:remaining])
+    
+        if len(final_options) < max_results and always_show_results:
+            remaining = max_results - len(final_options)
+            final_options.extend(acceptable_options[:remaining])
+    
+        # Add ranking
+        for i, opt in enumerate(final_options, 1):
+            opt['rank'] = i
+            opt['category'] = ('ideal' if opt in ideal_options else
+                              'adapted' if opt in good_options else 'acceptable')
+    
+        # Calculate summary statistics
+        if final_options:
+            avg_score = np.mean([opt['composite_score'] for opt in final_options])
+            avg_prob = np.mean([opt['itm_probability'] for opt in final_options])
+            avg_profit = np.mean([opt['profit_potential'] for opt in final_options])
+            avg_risk = np.mean([opt['risk_level'] for opt in final_options])
+            avg_days = np.mean([opt['days_to_expiration'] for opt in final_options])
+        else:
+            avg_score = avg_prob = avg_profit = avg_risk = avg_days = 0.0
+    
+        # Generate market context message
+        context_message = f"{regime.title()} market regime detected"
+        if regime_confidence > 0.7:
+            context_message += f" (High confidence: {regime_confidence:.1%})"
+        else:
+            context_message += f" (Moderate confidence: {regime_confidence:.1%})"
+    
+        if len(ideal_options) == 0 and len(final_options) > 0:
+            context_message += f". Showing best available options with adapted criteria due to current market conditions."
+    
+        analysis_time = time.time() - start_time
+    
+        return {
+            'success': True,
+            'data': {
+                'smart_picks_analysis': {
+                    'total_options_analyzed': len(all_options),
+                    'total_options_found': len(final_options),
+                    'ideal_criteria_met': len(ideal_options),
+                    'adapted_criteria_met': len(good_options),
+                    'analysis_timestamp': time.time(),
+                    'market_context': {
+                        'regime': regime,
+                        'regime_confidence': regime_confidence,
+                        'message': context_message,
+                        'sentiment_analyzed_symbols': len(sentiment_analysis['sentiment_data']),
+                        'flow_analyzed_symbols': len(flow_analysis['flow_data']),
+                        'phase2_analytics': {
+                            'correlation_analyzed_symbols': len(correlation_analysis['correlation_data']),
+                            'analytics_enabled': ['multi_scenario_monte_carlo', 'pattern_recognition', 'volatility_forecasting', 'event_driven', 'cross_asset_correlation'],
+                            'institutional_grade_features': True,
+                            'advanced_probability_models': 5
+                        }
+                    },
+                    'criteria': {
+                        'target_days_to_expiry': max_days_to_expiry,
+                        'target_profit_potential': target_profit_potential,
+                        'target_probability': target_probability,
+                        'target_risk_level': target_risk_level,
+                        'adapted_probability': adapted_probability,
+                        'adapted_profit': adapted_profit,
+                        'adapted_risk': adapted_risk,
+                        'always_show_results': always_show_results
+                    },
+                    'summary_stats': {
+                        'average_composite_score': round(avg_score, 4),
+                        'average_itm_probability': round(avg_prob, 4),
+                        'average_profit_potential': round(avg_profit, 4),
+                        'average_risk_level': round(avg_risk, 2),
+                        'average_days_to_expiration': round(avg_days, 1)
+                    },
+                    'optimal_options': final_options,
+                    'performance_metrics': {
+                        'processing_time_seconds': round(analysis_time, 2),
+                        'symbols_analyzed': len(symbols),
+                        'options_per_second': round(len(all_options) / max(1, analysis_time), 1)
+                    }
+                }
             }
         }
-    }
+    except Exception as e:
+        logger.error(f"Error in find_optimal_risk_reward_options_enhanced: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': f"Analysis failed: {str(e)}"
+        }
 
 # Option Selection and Monitoring System
 def select_option_for_monitoring(symbol: str, strike: float, expiration_date: str,
