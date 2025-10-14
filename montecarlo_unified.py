@@ -5717,7 +5717,48 @@ async def find_optimal_risk_reward_options_enhanced(
             context_message += f". Showing best available options with adapted criteria due to current market conditions."
     
         analysis_time = time.time() - start_time
-    
+
+        # STEP 7: AI Enhancement Layer (if enabled)
+        if AI_ENABLED and final_options:
+            logger.info(f"🧠 Enhancing top {len(final_options)} options with AI analysis...")
+
+            # Prepare market context for AI analysis
+            market_context = {
+                'regime': regime,
+                'regime_confidence': regime_confidence,
+                'sentiment_analyzed': len(sentiment_analysis['sentiment_data']),
+                'flow_analyzed': len(flow_analysis['flow_data'])
+            }
+
+            # Enhance each option with AI intelligence
+            enhanced_options = []
+            for option in final_options:
+                try:
+                    enhanced = await enhance_option_with_ai(option, market_context)
+                    enhanced_options.append(enhanced)
+                except Exception as e:
+                    logger.warning(f"Failed to enhance {option.get('symbol')} ${option.get('strike')}: {e}")
+                    # Keep original option if enhancement fails
+                    enhanced_options.append(option)
+
+            # Re-sort by AI-adjusted score if available
+            final_options = sorted(
+                enhanced_options,
+                key=lambda x: x.get('ai_adjusted_score', x.get('composite_score', 0)),
+                reverse=True
+            )
+
+            # Update ranks after AI re-sorting
+            for i, option in enumerate(final_options, 1):
+                option['rank'] = i
+
+            logger.info(f"✅ AI enhancement complete. Top option: {final_options[0].get('symbol')} ${final_options[0].get('strike')} (AI score: {final_options[0].get('ai_adjusted_score', 0):.2f})")
+        else:
+            if not AI_ENABLED:
+                logger.info("ℹ️ AI enhancement disabled (no API keys configured)")
+            elif not final_options:
+                logger.info("ℹ️ No options to enhance")
+
         return {
             'success': True,
             'data': {
