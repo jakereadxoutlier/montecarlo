@@ -969,10 +969,15 @@ class PolygonClient:
 
         return quotes
 
-    async def get_options_chain(self, symbol: str, expiration: str = None) -> Dict[str, Any]:
+    async def get_options_chain(self, symbol: str, expiration: str = None, min_strike: float = None) -> Dict[str, Any]:
         """
         Get options chain with Greeks & IV from Polygon.io
         Uses Options Chain Snapshot endpoint
+
+        Args:
+            symbol: Stock symbol
+            expiration: Expiration date (YYYY-MM-DD)
+            min_strike: Minimum strike price (for filtering OTM calls)
         """
         if not self.enabled:
             logger.error("Polygon.io not configured - API key required")
@@ -982,9 +987,12 @@ class PolygonClient:
             # Format expiration date for Polygon (YYYY-MM-DD)
             url = f"{self.base_url}/v3/snapshot/options/{symbol}"
 
-            params = {'apiKey': self.api_key}
+            params = {'apiKey': self.api_key, 'limit': 250}  # Get more results
             if expiration:
                 params['expiration_date'] = expiration
+            if min_strike:
+                # Filter for strikes >= current price (OTM calls)
+                params['strike_price.gte'] = min_strike
 
             headers = {'Authorization': f'Bearer {self.api_key}'}
 
@@ -999,32 +1007,26 @@ class PolygonClient:
                         data = await response.json()
                         results = data.get('results', [])
 
-                        # DEBUG: Log first option to see exact structure
-                        if results and len(results) > 0:
-                            logger.info(f"🔍 DEBUG Polygon.io response for {symbol}:")
-                            logger.info(f"  Total results: {len(results)}")
-                            logger.info(f"  First option keys: {list(results[0].keys())}")
-                            logger.info(f"  First option full: {results[0]}")
-                            if len(results) > 1:
-                                logger.info(f"  Last option (strike): {results[-1].get('details', {}).get('strike_price')}")
-
                         calls = []
                         puts = []
 
                         for opt in results:
                             details = opt.get('details', {})
                             greeks = opt.get('greeks', {})
-                            last_quote = opt.get('last_quote', {})
+                            day_data = opt.get('day', {})
 
+                            # Parse option data
+                            # NOTE: implied_volatility is at ROOT level, not in greeks!
+                            # NOTE: bid/ask not available in this endpoint, using close price
                             option_dict = {
                                 'strike': details.get('strike_price', 0),
                                 'expiration': details.get('expiration_date', ''),
-                                'bid': last_quote.get('bid', 0),
-                                'ask': last_quote.get('ask', 0),
-                                'last': opt.get('day', {}).get('last_quote', {}).get('price', 0),
-                                'volume': opt.get('day', {}).get('volume', 0),
+                                'bid': day_data.get('close', 0),  # Use close as proxy for bid
+                                'ask': day_data.get('close', 0),  # Use close as proxy for ask
+                                'last': day_data.get('close', 0),
+                                'volume': day_data.get('volume', 0),
                                 'open_interest': opt.get('open_interest', 0),
-                                'implied_volatility': greeks.get('implied_volatility', 0),
+                                'implied_volatility': opt.get('implied_volatility', 0),  # ✅ ROOT LEVEL!
                                 'delta': greeks.get('delta', 0),
                                 'gamma': greeks.get('gamma', 0),
                                 'theta': greeks.get('theta', 0),
@@ -5235,7 +5237,12 @@ async def find_optimal_risk_reward_options_enhanced(
                     # Get options chain from Polygon.io (NO YFINANCE)
                     # Add delay to respect rate limits
                     await asyncio.sleep(1.5)  # 1.5s delay to stay well under per-minute limits
-                    options_data = await polygon_client.get_options_chain(symbol, expiration_date)
+                    # Filter for OTM calls (strikes >= current price)
+                    options_data = await polygon_client.get_options_chain(
+                        symbol,
+                        expiration_date,
+                        min_strike=current_price * 0.95  # Start slightly below current to catch near-money options
+                    )
                     if 'calls' not in options_data or options_data['calls'].empty:
                         continue
 
@@ -5250,16 +5257,19 @@ async def find_optimal_risk_reward_options_enhanced(
                         bid = option.get('bid', 0) or 0
                         ask = option.get('ask', 0) or 0
 
-                        # Enhanced filtering with lower minimums for "always show results"
-                        min_volume = 10 if always_show_results else 25
-                        min_iv = 0.01 if always_show_results else 0.05  # Relaxed from 0.05/0.10 to 0.01/0.05
+                        # Enhanced filtering - relaxed requirements
+                        # Note: Polygon.io sometimes doesn't include IV (greeks empty)
+                        min_volume = 5 if always_show_results else 10  # Relaxed from 10/25
+                        min_iv = 0.001 if always_show_results else 0.01  # Very low threshold, will calculate ourselves if 0
 
                         # Debug: Log first few options to see what we're working with
                         if _ < 3:  # Log first 3 options per expiration
                             logger.info(f"  Option ${strike}: vol={volume}, IV={iv:.4f}, bid={bid}, ask={ask}")
 
+                        # Filter: OTM calls with some volume and either has IV or we can calculate it
+                        # Note: bid/ask are close prices (Polygon doesn't provide real bid/ask in this endpoint)
                         if (strike > current_price and volume >= min_volume and
-                            iv >= min_iv and bid > 0 and ask > 0):
+                            (iv >= min_iv or iv == 0) and bid > 0):
 
                             # Enhanced analysis with sentiment
                             advanced_result = await advanced_engine.analyze_with_novel_techniques(
@@ -5529,12 +5539,12 @@ async def find_optimal_risk_reward_options_enhanced(
                                     reasons.append(f"ITM/ATM (${strike} <= ${current_price})")
                                 if volume < min_volume:
                                     reasons.append(f"low_vol({volume} < {min_volume})")
-                                if iv < min_iv:
+                                if iv < min_iv and iv != 0:
                                     reasons.append(f"low_IV({iv:.4f} < {min_iv})")
                                 if bid <= 0:
-                                    reasons.append(f"no_bid({bid})")
-                                if ask <= 0:
-                                    reasons.append(f"no_ask({ask})")
+                                    reasons.append(f"no_price({bid})")
+                                if not reasons:
+                                    reasons.append("unknown")
                                 logger.info(f"  ❌ Filtered ${strike}: {', '.join(reasons)}")
 
                 except Exception as e:
