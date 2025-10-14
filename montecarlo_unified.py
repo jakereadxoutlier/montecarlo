@@ -3054,7 +3054,8 @@ def calculate_profit_potential(current_price: float, strike: float, option_price
 
     if option_price > 0:
         profit_potential = (intrinsic_at_target - option_price) / option_price
-        return max(0, profit_potential)  # Only positive profit potential
+        # Cap at 500% to avoid penny option lottery tickets ranking highest
+        return min(5.0, max(0, profit_potential))  # Cap at 500%
 
     return 0.0
 
@@ -5252,8 +5253,9 @@ async def find_optimal_risk_reward_options_enhanced(
                         exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
                         days_to_exp = (exp_date - current_time).days
                         time_to_expiration = days_to_exp / 365.0
-    
-                        if days_to_exp > max_days_to_expiry:
+
+                        # SWING TRADING FILTER: 7-30 days (not weekly lotteries!)
+                        if days_to_exp < 7 or days_to_exp > max_days_to_expiry:
                             continue
     
                         # Get options chain from Polygon.io (NO YFINANCE)
@@ -5279,19 +5281,23 @@ async def find_optimal_risk_reward_options_enhanced(
                             bid = option.get('bid', 0) or 0
                             ask = option.get('ask', 0) or 0
     
-                            # Enhanced filtering - relaxed requirements
-                            # Note: Polygon.io sometimes doesn't include IV (greeks empty)
-                            min_volume = 5 if always_show_results else 10  # Relaxed from 10/25
-                            min_iv = 0.001 if always_show_results else 0.01  # Very low threshold, will calculate ourselves if 0
-    
+                            # SWING TRADING FILTERS (not lottery tickets!)
+                            min_volume = 100  # Need liquidity
+                            min_iv = 0.10  # Minimum 10% IV
+                            min_price = 0.25  # No penny options
+                            max_otm_percent = 0.10  # Max 10% OTM (not 48 points!)
+
+                            max_strike = current_price * (1 + max_otm_percent)
+
                             # Debug: Log first few options to see what we're working with
                             if _ < 3:  # Log first 3 options per expiration
                                 logger.info(f"  Option ${strike}: vol={volume}, IV={iv:.4f}, bid={bid}, ask={ask}")
-    
-                            # Filter: OTM calls with some volume and either has IV or we can calculate it
-                            # Note: bid/ask are close prices (Polygon doesn't provide real bid/ask in this endpoint)
-                            if (strike > current_price and volume >= min_volume and
-                                (iv >= min_iv or iv == 0) and bid > 0):
+
+                            # SWING TRADING FILTER: Reasonable strikes, liquidity, price
+                            if (strike > current_price and strike <= max_strike and
+                                volume >= min_volume and
+                                iv >= min_iv and
+                                bid >= min_price):
     
                                 # Enhanced analysis with sentiment
                                 advanced_result = await advanced_engine.analyze_with_novel_techniques(
