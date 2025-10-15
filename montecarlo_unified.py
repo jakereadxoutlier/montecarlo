@@ -3619,7 +3619,7 @@ async def check_monitoring_alerts(option_key: str, option_data: Dict[str, Any], 
             # Rate limiting: don't send alerts more than once every 30 minutes for the same option
             if not last_alert_time or (current_time - datetime.datetime.fromisoformat(last_alert_time)).total_seconds() > 1800:
 
-                alert_message = f"Monitoring Alert: {symbol} ${strike} Call\n" + "\n".join([f"- {alert}" for alert in alerts_to_send])
+                alert_message = f"MONITORING ALERT: {symbol} ${strike} Call\n\n" + "\n".join([f"- {alert}" for alert in alerts_to_send])
 
                 # Update alert tracking
                 option_data['alerts_sent'] += 1
@@ -3737,12 +3737,12 @@ async def check_intelligent_sell_signals(option_key: str, option_data: Dict[str,
                 # Send sell alert if it's been more than 1 hour since last sell alert
                 if not last_sell_alert or (current_time - datetime.datetime.fromisoformat(last_sell_alert)).total_seconds() > 3600:
 
-                    sell_alert_message = f"🚨 SELL RECOMMENDATION: {symbol} ${strike} Call\n"
-                    sell_alert_message += f"📊 Recommendation: {recommendation}\n"
-                    sell_alert_message += f"🎯 Signal Strength: {signal_strength}/10\n"
-                    sell_alert_message += f"💰 Current Price: ${option_data.get('current_price', 'N/A')}\n"
-                    sell_alert_message += f"📈 Profit/Loss: {option_data.get('profit_loss_percent', 'N/A')}\n"
-                    sell_alert_message += "🔍 Factors:\n" + "\n".join([f"• {signal}" for signal in sell_signals])
+                    sell_alert_message = f"SELL RECOMMENDATION: {symbol} ${strike} Call\n\n"
+                    sell_alert_message += f"Recommendation: {recommendation}\n"
+                    sell_alert_message += f"Signal Strength: {signal_strength}/10\n"
+                    sell_alert_message += f"Current Price: ${option_data.get('current_price', 'N/A')}\n"
+                    sell_alert_message += f"Profit/Loss: {option_data.get('profit_loss_percent', 'N/A')}\n\n"
+                    sell_alert_message += "Factors:\n" + "\n".join([f"- {signal}" for signal in sell_signals])
 
                     # SEND TO SLACK IMMEDIATELY
                     try:
@@ -6058,9 +6058,9 @@ async def _handle_smart_picks_internal(message, say):
 
         # Show AI status if enabled
         if AI_ENABLED:
-            await say(f"🧠 **Smart Picks Analysis Starting (AI Enhanced)**\n🔍 Finding optimal options with institutional intelligence...\n⏳ This may take 30-60 seconds.")
+            await say(f"🧠 Smart Picks Analysis Starting (AI Enhanced)\n🔍 Finding optimal options with institutional intelligence...\n⏳ This may take 30-60 seconds.")
         else:
-            await say(f"🔢 **Smart Picks Analysis Starting**\n🔍 Finding optimal options using mathematical analysis...\n⏳ This may take 30-60 seconds.")
+            await say(f"🔢 Smart Picks Analysis Starting\n🔍 Finding optimal options using mathematical analysis...\n⏳ This may take 30-60 seconds.")
 
         # Call the function directly (no MCP) - use most liquid symbols
         result = await find_optimal_risk_reward_options_enhanced(
@@ -6081,44 +6081,44 @@ async def _handle_smart_picks_internal(message, say):
             if optimal_options:
                 market_context = analysis.get('market_context', {})
 
-                response = f"**🎯 ENHANCED Smart Picks - Institutional Grade Analysis**\n\n"
+                response = f"ENHANCED SMART PICKS - INSTITUTIONAL GRADE ANALYSIS\n\n"
 
                 # Market Context
-                response += f"**📈 Market Context:**\n"
-                response += f"- Regime: **{market_context.get('regime', 'Unknown').title()}** "
+                response += f"MARKET CONTEXT:\n"
+                response += f"- Regime: {market_context.get('regime', 'Unknown').title()} "
                 response += f"({market_context.get('regime_confidence', 0):.0%} confidence)\n"
                 response += f"- {market_context.get('message', 'Analysis complete')}\n\n"
 
                 # Enhanced Analysis Summary
-                response += f"**🔬 Institutional Analysis Summary:**\n"
-                response += f"- Options Analyzed: **{analysis['total_options_analyzed']:,}**\n"
-                response += f"- Ideal Criteria Met: **{analysis.get('ideal_criteria_met', 0)}** options\n"
-                response += f"- Sentiment Analyzed: **{market_context.get('sentiment_analyzed_symbols', 0)}** symbols\n"
-                response += f"- Options Flow Analyzed: **{market_context.get('flow_analyzed_symbols', 0)}** symbols\n"
-                response += f"- Processing Time: **{analysis.get('performance_metrics', {}).get('processing_time_seconds', 0):.1f}s**\n\n"
+                response += f"INSTITUTIONAL ANALYSIS SUMMARY:\n"
+                response += f"- Options Analyzed: {analysis['total_options_analyzed']:,}\n"
+                response += f"- Ideal Criteria Met: {analysis.get('ideal_criteria_met', 0)} options\n"
+                response += f"- Sentiment Analyzed: {market_context.get('sentiment_analyzed_symbols', 0)} symbols\n"
+                response += f"- Options Flow Analyzed: {market_context.get('flow_analyzed_symbols', 0)} symbols\n"
+                response += f"- Processing Time: {analysis.get('performance_metrics', {}).get('processing_time_seconds', 0):.1f}s\n\n"
 
                 # Results Summary
-                response += f"**📊 Results Summary:**\n"
-                response += f"- Avg ITM Probability: **{summary['average_itm_probability']:.1%}**\n"
-                response += f"- Avg Profit Potential: **{summary['average_profit_potential']:.1%}**\n"
-                response += f"- Avg Risk Level: **{summary['average_risk_level']:.1f}/10**\n"
-                response += f"- Avg Days to Expiry: **{summary['average_days_to_expiration']:.0f}**\n\n"
+                response += f"RESULTS SUMMARY:\n"
+                response += f"- Avg ITM Probability: {summary['average_itm_probability']:.1%}\n"
+                response += f"- Avg Profit Potential: {summary['average_profit_potential']:.1%}\n"
+                response += f"- Avg Risk Level: {summary['average_risk_level']:.1f}/10\n"
+                response += f"- Avg Days to Expiry: {summary['average_days_to_expiration']:.0f}\n\n"
 
-                response += f"**🏆 Top {len(optimal_options)} Options Found:**\n"
+                response += f"TOP {len(optimal_options)} OPTIONS FOUND:\n"
 
                 for i, opt in enumerate(optimal_options[:6], 1):  # Show top 6
                     category = opt.get('category', 'acceptable')
                     category_emoji = "🎯" if category == "ideal" else "📈" if category == "adapted" else "⚖️"
 
-                    response += f"\n{i}. **{opt['symbol']} ${opt.get('strike', 0)} Call** {category_emoji} (Exp: {opt.get('expiration', 'N/A')})\n"
+                    response += f"\n{i}. {opt['symbol']} ${opt.get('strike', 0)} Call {category_emoji} (Exp: {opt.get('expiration', 'N/A')})\n"
 
                     # Show AI-adjusted score if available
                     if opt.get('ai_adjusted_score'):
-                        response += f"   • **AI Score: {opt['ai_adjusted_score']:.1f}** | Math Score: {opt.get('composite_score', 0):.1f}\n"
+                        response += f"   - AI Score: {opt['ai_adjusted_score']:.1f} | Math Score: {opt.get('composite_score', 0):.1f}\n"
                     else:
-                        response += f"   • **Score: {opt.get('composite_score', 0):.1f}**\n"
+                        response += f"   - Score: {opt.get('composite_score', 0):.1f}\n"
 
-                    response += f"   • **ITM Probability: {opt.get('itm_probability', 0):.1%}**"
+                    response += f"   - ITM Probability: {opt.get('itm_probability', 0):.1%}"
 
                     # Show sentiment adjustment if significant
                     sentiment_adj = opt.get('sentiment_adjustment', 0)
@@ -6126,11 +6126,11 @@ async def _handle_smart_picks_internal(message, say):
                         response += f" (Sentiment +{sentiment_adj:+.1%})"
                     response += "\n"
 
-                    response += f"   • **Profit Potential: {opt['profit_potential']:.1%}**\n"
-                    response += f"   • **Risk Level: {opt['risk_level']:.1f}/10**\n"
-                    response += f"   • **Days to Expiry: {opt['days_to_expiration']}**\n"
-                    response += f"   • **Option Price: ${opt['option_price']:.2f}**\n"
-                    response += f"   • **Volume: {opt.get('volume', 0):,}**"
+                    response += f"   - Profit Potential: {opt['profit_potential']:.1%}\n"
+                    response += f"   - Risk Level: {opt['risk_level']:.1f}/10\n"
+                    response += f"   - Days to Expiry: {opt['days_to_expiration']}\n"
+                    response += f"   - Option Price: ${opt['option_price']:.2f}\n"
+                    response += f"   - Volume: {opt.get('volume', 0):,}"
 
                     # Show flow sentiment if available
                     flow_data = opt.get('flow_data', {})
@@ -6145,45 +6145,46 @@ async def _handle_smart_picks_internal(message, say):
                     if AI_ENABLED and opt.get('ai_insights'):
                         ai = opt['ai_insights']
                         if ai.get('conviction_score'):
-                            response += f"   \n   🧠 **AI Analysis:**\n"
-                            response += f"   • Conviction: **{ai['conviction_score']}/10**"
+                            response += f"   \n   🧠 AI ANALYSIS:\n"
+                            response += f"   - Conviction: {ai['conviction_score']}/10"
                             if ai.get('unusual_activity'):
                                 response += " 🔥 Unusual Activity"
                             response += "\n"
                             if ai.get('key_insight'):
-                                response += f"   • Insight: {ai['key_insight']}\n"
+                                response += f"   - Insight: {ai['key_insight']}\n"
                             if ai.get('entry_guidance'):
-                                response += f"   • Entry: {ai['entry_guidance']}\n"
+                                response += f"   - Entry: {ai['entry_guidance']}\n"
                             if ai.get('smart_money'):
-                                response += f"   • Smart Money: {ai['smart_money']}\n"
+                                response += f"   - Smart Money: {ai['smart_money']}\n"
 
                 if len(optimal_options) > 6:
                     response += f"\n... and {len(optimal_options) - 6} more options\n"
 
-                response += f"\n💡 **To select an option:** Reply with `Pick [SYMBOL] $[STRIKE]`\n"
-                response += f"🎯 **Example:** `Pick {optimal_options[0]['symbol']} ${optimal_options[0]['strike']}`\n\n"
-                response += f"🏦 **Institutional-Grade Features (NEW):**\n"
+                response += f"\nTO SELECT AN OPTION:\n"
+                response += f"Reply with: Pick [SYMBOL] $[STRIKE]\n"
+                response += f"Example: Pick {optimal_options[0]['symbol']} ${optimal_options[0]['strike']}\n\n"
+                response += f"INSTITUTIONAL-GRADE FEATURES:\n"
                 response += f"- Real-time Market Sentiment Analysis\n"
                 response += f"- Market Regime Detection & Adaptive Criteria\n"
                 response += f"- Options Flow & Unusual Activity Detection\n"
                 response += f"- 7 Novel Analysis Techniques (Fractal Volatility, Gamma Squeeze, etc.)\n"
-                response += f"- **ALWAYS Shows Best Available Options** (Never \"None Found\")\n"
+                response += f"- ALWAYS Shows Best Available Options (Never \"None Found\")\n"
                 response += f"- Enhanced Composite Scoring with Sentiment Multipliers"
 
                 await say(response)
             else:
                 # This should rarely happen with enhanced version since it always shows results
                 market_context = analysis.get('market_context', {})
-                response = f"⚠️ **No Options Data Available**\n\n"
-                response += f"**Market Status:**\n"
+                response = f"NO OPTIONS DATA AVAILABLE\n\n"
+                response += f"MARKET STATUS:\n"
                 response += f"- Regime: {market_context.get('regime', 'Unknown').title()}\n"
                 response += f"- {market_context.get('message', 'Markets may be closed or data unavailable')}\n\n"
-                response += f"**This is unusual with Enhanced Smart Picks** - we normally always show best available options.\n"
+                response += f"This is unusual with Enhanced Smart Picks - we normally always show best available options.\n"
                 response += f"Please try again in a few minutes or when markets are open."
                 await say(response)
         else:
             error_msg = result.get('error', 'Unknown error') if result else 'Connection error'
-            await say(f"❌ **Enhanced Smart Picks Analysis Failed**\n\n**Error:** {error_msg}\n\n**Possible causes:**\n- Markets closed (weekends/holidays)\n- API rate limits or timeouts\n- Network connectivity issues\n\n**Try:**\n- Wait a few minutes and try again\n- Try during market hours (9:30 AM - 4:00 PM ET)\n- Use `Pick [SYMBOL] $[STRIKE]` for individual analysis\n\n*Note: Enhanced Smart Picks includes real-time sentiment, market regime detection, and options flow analysis.*")
+            await say(f"ENHANCED SMART PICKS ANALYSIS FAILED\n\nError: {error_msg}\n\nPossible causes:\n- Markets closed (weekends/holidays)\n- API rate limits or timeouts\n- Network connectivity issues\n\nTry:\n- Wait a few minutes and try again\n- Try during market hours (9:30 AM - 4:00 PM ET)\n- Use Pick [SYMBOL] $[STRIKE] for individual analysis\n\nNote: Enhanced Smart Picks includes real-time sentiment, market regime detection, and options flow analysis.")
 
     except Exception as e:
         logger.error(f"Error handling Smart Picks command: {e}")
@@ -6232,23 +6233,23 @@ def setup_message_handlers(app):
                 auto_monitoring = analysis.get('auto_monitoring', {})
 
                 # Format response
-                response = f"**{symbol} ${strike} Call Analysis**\n\n"
-                response += f"**Current Status:**\n"
+                response = f"{symbol} ${strike} CALL ANALYSIS\n\n"
+                response += f"CURRENT STATUS:\n"
                 response += f"- Stock Price: ${option_data['current_price']:.2f}\n"
                 response += f"- Option Price: ${option_data['option_price']:.2f}\n"
                 response += f"- ITM Probability: {option_data['itm_probability']:.1%}\n"
                 response += f"- Days to Expiry: {option_data['time_to_expiration_days']:.0f}\n\n"
 
-                response += f"**Recommendation: {advice['recommendation']}**\n"
+                response += f"RECOMMENDATION: {advice['recommendation']}\n"
                 response += f"Confidence: {advice['confidence']} ({advice['net_score']:+d} score)\n\n"
 
                 # Show monitoring status
                 if auto_monitoring.get('enabled'):
-                    response += f"✅ **AUTO-MONITORING ENABLED**\n"
-                    response += f"📊 Total positions monitored: {auto_monitoring.get('total_monitored', 0)}\n"
-                    response += f"🔔 You'll receive sell alerts when profit targets are hit!\n\n"
+                    response += f"AUTO-MONITORING ENABLED\n"
+                    response += f"Total positions monitored: {auto_monitoring.get('total_monitored', 0)}\n"
+                    response += f"You'll receive sell alerts when profit targets are hit!\n\n"
 
-                response += f"**Key Factors:**\n"
+                response += f"KEY FACTORS:\n"
                 for factor in advice['factors'][:6]:
                     response += f"- {factor}\n"
 
@@ -6257,7 +6258,7 @@ def setup_message_handlers(app):
 
                 # Add monitoring instructions for non-buy recommendations
                 if not auto_monitoring.get('enabled'):
-                    response += f"\n💡 **Tip:** Only BUY recommendations are auto-monitored for sell alerts."
+                    response += f"\nTip: Only BUY recommendations are auto-monitored for sell alerts."
 
                 await say(response)
             else:
@@ -6335,9 +6336,9 @@ Perfect for trading with professional-grade analysis."""
         elif any(word in text for word in ['cancel', 'stop', 'stop monitoring']):
             result = stop_continuous_monitoring()  # NOT async, remove await
             if result and (result.get('stopped') or result.get('already_stopped')):
-                await say("🛑 **Monitoring Stopped**\n\nAll position monitoring has been stopped. You will no longer receive sell alerts.")
+                await say("MONITORING STOPPED\n\nAll position monitoring has been stopped. You will no longer receive sell alerts.")
             else:
-                await say("❌ Error stopping monitoring. Please try again.")
+                await say("Error stopping monitoring. Please try again.")
 
         elif any(word in text for word in ['status', 'monitoring status', 'positions']):
             result = list_selected_options()  # NOT async, remove await
@@ -6352,35 +6353,35 @@ Perfect for trading with professional-grade analysis."""
                     for opt_key, opt_data in data['selected_options'].items():
                         if opt_data.get('status') == 'sold':
                             sold_count += 1
-                            position_details += f"• **{opt_data['symbol']} ${opt_data['strike']}** ✅ SOLD (Exp: {opt_data['expiration_date']})\n"
+                            position_details += f"- {opt_data['symbol']} ${opt_data['strike']} - SOLD (Exp: {opt_data['expiration_date']})\n"
                             if opt_data.get('final_pnl'):
                                 position_details += f"  P&L: {opt_data['final_pnl']} | Sold: {opt_data.get('sold_at', '')[:10]}\n"
                             else:
                                 position_details += f"  Sold: {opt_data.get('sold_at', '')[:10]}\n"
                         else:
                             active_count += 1
-                            position_details += f"• **{opt_data['symbol']} ${opt_data['strike']}** 🔔 MONITORING (Exp: {opt_data['expiration_date']})\n"
+                            position_details += f"- {opt_data['symbol']} ${opt_data['strike']} - MONITORING (Exp: {opt_data['expiration_date']})\n"
                             position_details += f"  Added: {opt_data['selected_at'][:10]} | Alerts sent: {opt_data.get('alerts_sent', 0)}\n"
 
-                    response = f"**📊 Monitoring Status**\n\n"
-                    response += f"**Active Monitoring:** {active_count} positions\n"
-                    response += f"**Sold Positions:** {sold_count} completed\n"
-                    response += f"**System Status:** {'✅ Active' if data.get('monitoring_active') else '❌ Stopped'}\n\n"
+                    response = f"MONITORING STATUS\n\n"
+                    response += f"Active Monitoring: {active_count} positions\n"
+                    response += f"Sold Positions: {sold_count} completed\n"
+                    response += f"System Status: {'Active' if data.get('monitoring_active') else 'Stopped'}\n\n"
                     response += position_details
 
                     await say(response)
                 else:
-                    await say("📊 **No Active Positions**\n\nUse `Pick [SYMBOL] $[STRIKE]` to start monitoring an option.")
+                    await say("NO ACTIVE POSITIONS\n\nUse Pick [SYMBOL] $[STRIKE] to start monitoring an option.")
             else:
-                await say("❌ Error getting monitoring status. Please try again.")
+                await say("Error getting monitoring status. Please try again.")
 
         # Start monitoring command
         elif any(word in text for word in ['start monitoring', 'resume monitoring']):
             result = start_continuous_monitoring()  # NOT async, remove await
             if result and (result.get('started') or result.get('already_running')):
-                await say("✅ **Monitoring Started**\n\nContinuous monitoring is now active. You'll receive sell alerts when profit targets are hit!")
+                await say("MONITORING STARTED\n\nContinuous monitoring is now active. You'll receive sell alerts when profit targets are hit!")
             else:
-                await say("❌ Error starting monitoring. Please try again.")
+                await say("Error starting monitoring. Please try again.")
 
         # Sold command - mark option as sold to stop alerts
         elif text.lower().startswith('sold '):
@@ -6405,10 +6406,10 @@ Perfect for trading with professional-grade analysis."""
             )
 
             if result and result.get('marked_sold'):
-                await say(f"✅ **{symbol} ${strike} Marked as SOLD**\n\n📊 Sell alerts stopped for this position.\n💰 Profit/Loss: {result.get('final_pnl', 'Not calculated')}\n\nGood trade! 🎉")
+                await say(f"{symbol} ${strike} MARKED AS SOLD\n\nSell alerts stopped for this position.\nProfit/Loss: {result.get('final_pnl', 'Not calculated')}\n\nGood trade!")
             else:
                 error_msg = result.get('error', 'Unknown error') if result else 'Connection error'
-                await say(f"❌ Could not mark {symbol} ${strike} as sold: {error_msg}\n\nTry `Status` to see your monitored positions.")
+                await say(f"Could not mark {symbol} ${strike} as sold: {error_msg}\n\nTry Status to see your monitored positions.")
 
         # Default response
         else:
