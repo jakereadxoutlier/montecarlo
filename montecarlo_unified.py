@@ -6277,42 +6277,46 @@ def setup_message_handlers(app):
             deployment = os.getenv('RAILWAY_SERVICE_NAME', 'unknown')
             replica = os.getenv('RAILWAY_REPLICA_ID', str(uuid.uuid4())[:6])
 
-            help_text = f"""**🎯 MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis**
-**🔍 Deployment: {deployment} | Host: {hostname} | Replica: {replica}**
+            help_text = f"""MonteCarlo UNIFIED v2 - Institutional Grade Options Analysis
+Deployment: {deployment} | Host: {hostname} | Replica: {replica}
 
-**📈 Core Commands:**
-- `Pick [SYMBOL] $[STRIKE]` - Get buy/sell advice + auto-monitoring for sell alerts
-- `Analyze [SYMBOL] $[STRIKE]` - Same as Pick
-- `Buy [SYMBOL] $[STRIKE]` - Same as Pick
+CORE COMMANDS:
+- Pick [SYMBOL] $[STRIKE] - Get buy/sell advice + auto-monitoring for sell alerts
+- Analyze [SYMBOL] $[STRIKE] - Same as Pick
+- Buy [SYMBOL] $[STRIKE] - Same as Pick
 
-**🧠 Advanced Commands:**
-- `Smart Picks` - Find optimal risk/reward options ≤30 days (INSTITUTIONAL GRADE!)
+ADVANCED COMMANDS:
+- Smart Picks - Find optimal risk/reward options (manual scan)
+- Auto Start - Enable real-time automated Smart Picks alerts
+- Auto Stop - Disable automated alerts
 
-**📊 Monitoring Commands:**
-- `Status` or `Positions` - Check monitored positions
-- `Sold [SYMBOL] $[STRIKE]` - Mark option as sold (stops alerts)
-- `Stop` or `Cancel` - Stop all monitoring
-- `Start Monitoring` - Resume monitoring
+MONITORING COMMANDS:
+- Status or Positions - Check monitored positions
+- Sold [SYMBOL] $[STRIKE] - Mark option as sold (stops alerts)
+- Stop or Cancel - Stop all monitoring
+- Start Monitoring - Resume monitoring
 
-**🔧 System Commands:**
-- `Help` - Show this help message
+SYSTEM COMMANDS:
+- Help - Show this help message
 
-**📋 Examples:**
-- `Pick TSLA $430` - Analyzes TSLA $430 call + starts monitoring
-- `Smart Picks` - Shows top institutional-grade options
-- `Status` - Check all monitored positions
-- `Sold TSLA $430` - Mark TSLA $430 as sold (stops alerts)
-- `Stop` - Stop monitoring all positions
+EXAMPLES:
+- Pick TSLA $430 - Analyzes TSLA $430 call + starts monitoring
+- Smart Picks - Shows top institutional-grade options (manual)
+- Auto Start - Begins 24/7 automated Smart Picks monitoring
+- Status - Check all monitored positions
+- Sold TSLA $430 - Mark TSLA $430 as sold (stops alerts)
+- Stop - Stop monitoring all positions
 
-**⚡ Institutional Features:**
-- **Polygon.io Options Starter**: Unlimited API calls, Greeks & IV, 15-min delayed (perfect for swing trading)
-- **Perplexity AI**: Real-time market sentiment with multi-source aggregation
-- **FRED Economic Data**: Government bond yields, economic indicators
-- **5 Advanced Analytics**: Multi-scenario Monte Carlo, pattern recognition, volatility forecasting, event analysis, cross-asset correlation
-- **Auto-monitoring**: BUY recommendations automatically monitored (30s market hours, 5min after-hours)
-- **Smart sell alerts**: Real-time profit target notifications with multi-factor scoring
+INSTITUTIONAL FEATURES:
+- Polygon.io Options Starter: Unlimited API calls, Greeks & IV, 15-min delayed (perfect for swing trading)
+- Perplexity AI: Real-time market sentiment with multi-source aggregation
+- FRED Economic Data: Government bond yields, economic indicators
+- 5 Advanced Analytics: Multi-scenario Monte Carlo, pattern recognition, volatility forecasting, event analysis, cross-asset correlation
+- Auto-monitoring: BUY recommendations automatically monitored (30s market hours, 5min after-hours)
+- Smart sell alerts: Real-time profit target notifications with multi-factor scoring
+- Real-time Auto Bot: 60-second news detection with multi-edge validation (when enabled)
 
-**🎯 Perfect for $1K+ trading capital with professional-grade analysis!**"""
+Perfect for trading with professional-grade analysis."""
             await say(help_text)
 
         # Smart Picks (fallback)
