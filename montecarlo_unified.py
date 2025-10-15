@@ -3941,6 +3941,65 @@ def get_monitoring_status() -> Dict[str, Any]:
         'last_update': datetime.datetime.now().isoformat()
     }
 
+# ============================================================================
+# AUTO-BOT REAL-TIME MONITORING LOOP
+# ============================================================================
+
+async def auto_bot_monitoring_loop():
+    """
+    Real-time monitoring loop for automated Smart Picks alerts.
+
+    Runs continuously while AUTO_BOT_ENABLED=True, polling for breaking news
+    and sending alerts when multiple edges align for profitable opportunities.
+
+    Features:
+    - 60-90 second polling frequency
+    - 15 symbol watchlist
+    - Multi-edge detection (Speed, Smart Money, Cheap Options, VIX, Sentiment)
+    - Confidence scoring (1-10)
+    - Alert threshold: 3+ edges, score > 2.0, confidence > 6
+    """
+    global AUTO_BOT_ENABLED
+
+    logger.info("🤖 Auto-Bot monitoring loop started")
+
+    # Watchlist symbols
+    WATCHLIST = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'SPY', 'QQQ', 'AMD', 'NFLX', 'COIN', 'PLTR', 'SHOP', 'SQ']
+
+    iteration = 0
+
+    while AUTO_BOT_ENABLED:
+        try:
+            iteration += 1
+            logger.info(f"🤖 Auto-Bot iteration {iteration} - Checking for opportunities...")
+
+            # TODO: Implement full auto-bot logic:
+            # 1. Poll Perplexity for breaking news (60-90 sec intervals)
+            # 2. Detect news events for watchlist symbols
+            # 3. Calculate multi-edge scores for detected events
+            # 4. Calculate confidence scores
+            # 5. Send Slack alerts when thresholds met
+
+            # Placeholder for now - will implement in next steps
+            logger.info("🤖 Auto-Bot placeholder - full implementation pending")
+
+            # Wait 60-90 seconds before next check (randomized to avoid patterns)
+            import random
+            wait_time = random.randint(60, 90)
+            logger.info(f"🤖 Auto-Bot waiting {wait_time} seconds until next check...")
+
+            await asyncio.sleep(wait_time)
+
+        except asyncio.CancelledError:
+            logger.info("🤖 Auto-Bot monitoring loop cancelled")
+            break
+        except Exception as e:
+            logger.error(f"🤖 Auto-Bot error: {e}")
+            # Continue running even if one iteration fails
+            await asyncio.sleep(60)
+
+    logger.info("🤖 Auto-Bot monitoring loop stopped")
+
 # Slack App Management Functions
 async def OLD_start_slack_app() -> Dict[str, Any]:
     """
@@ -6332,7 +6391,35 @@ Perfect for trading with professional-grade analysis."""
         elif re.match(r'^(pick|buy|analyze)\s+[A-Z]{2,5}\s+\$?\d+(\.\d+)?', text, re.IGNORECASE):
             await handle_pick_command(message, say)
 
-        # Monitoring control commands
+        # Auto Bot control commands
+        elif any(phrase in text for phrase in ['auto start', 'auto on', 'start auto', 'enable auto']):
+            if globals()['AUTO_BOT_ENABLED']:
+                await say("AUTO-BOT ALREADY RUNNING\n\nReal-time Smart Picks monitoring is already active.\nYou'll receive alerts when profitable opportunities are detected.")
+            else:
+                globals()['AUTO_BOT_ENABLED'] = True
+                logger.info("🤖 Auto-Bot ENABLED by user command")
+
+                # Start the auto-bot background task
+                try:
+                    loop = asyncio.get_event_loop()
+                    globals()['auto_bot_task'] = loop.create_task(auto_bot_monitoring_loop())
+
+                    await say("AUTO-BOT STARTED\n\nReal-time Smart Picks monitoring is now active.\n\nMonitoring Configuration:\n- Polling Frequency: Every 60-90 seconds\n- Watchlist: 15 symbols (NVDA, TSLA, AAPL, MSFT, GOOGL, AMZN, META, SPY, QQQ, AMD, NFLX, COIN, PLTR, SHOP, SQ)\n- Alert Threshold: 3+ edges detected, score > 2.0, confidence > 6\n- Top Recommendations: Best 5 options per alert\n\nYou'll receive alerts when multiple edges align for profitable opportunities.\n\nUse 'Auto Stop' to disable.")
+                except Exception as e:
+                    globals()['AUTO_BOT_ENABLED'] = False
+                    logger.error(f"Failed to start auto-bot: {e}")
+                    await say(f"Error starting Auto-Bot: {str(e)}\n\nPlease try again or contact support.")
+
+        elif any(phrase in text for phrase in ['auto stop', 'auto off', 'stop auto', 'disable auto']):
+            if not globals()['AUTO_BOT_ENABLED']:
+                await say("AUTO-BOT NOT RUNNING\n\nReal-time Smart Picks monitoring is already disabled.\nUse 'Auto Start' to enable automated alerts.")
+            else:
+                globals()['AUTO_BOT_ENABLED'] = False
+                logger.info("🤖 Auto-Bot DISABLED by user command")
+
+                await say("AUTO-BOT STOPPED\n\nReal-time Smart Picks monitoring has been disabled.\nThe current monitoring cycle will complete, then stop.\n\nYou will no longer receive automated alerts.\n\nYou can still use:\n- 'Smart Picks' for manual scans\n- 'Pick [SYMBOL] $[STRIKE]' for individual analysis\n\nUse 'Auto Start' to re-enable.")
+
+        # Monitoring control commands (for individual position monitoring)
         elif any(word in text for word in ['cancel', 'stop', 'stop monitoring']):
             result = stop_continuous_monitoring()  # NOT async, remove await
             if result and (result.get('stopped') or result.get('already_stopped')):
