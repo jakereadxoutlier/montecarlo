@@ -1174,6 +1174,10 @@ selected_options = {}
 monitoring_active = False
 monitoring_task = None
 
+# Auto-Bot system state (real-time Smart Picks alerts)
+AUTO_BOT_ENABLED = False  # OFF by default - user must enable with "Auto Start"
+auto_bot_task = None
+
 # Monitoring intervals
 PRICE_CHECK_INTERVAL = 60  # 1 minute for price/Greeks
 NEWS_CHECK_INTERVAL = 43200  # 12 hours for news/sentiment
@@ -6455,6 +6459,7 @@ async def main():
     logger.info("✅ MonteCarlo UNIFIED v2 Bot Ready!")
     logger.info("Commands: Smart Picks, Pick TSLA $430, Status, Help")
     logger.info("This is the UNIFIED deployment - if you see duplicate responses, shut down old deployments")
+    logger.info("🤖 Auto-Bot: OFF (use 'Auto Start' command to enable real-time alerts)")
 
     await handler.start_async()
 
