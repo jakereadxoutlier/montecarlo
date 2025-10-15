@@ -3942,6 +3942,256 @@ def get_monitoring_status() -> Dict[str, Any]:
     }
 
 # ============================================================================
+# AUTO-BOT EDGE DETECTION & SCORING SYSTEM
+# ============================================================================
+
+async def detect_breaking_news_perplexity(symbols: List[str]) -> List[Dict[str, Any]]:
+    """
+    Poll Perplexity for breaking financial news about watchlist symbols.
+
+    Args:
+        symbols: List of ticker symbols to monitor
+
+    Returns:
+        List of detected news events with timestamps and symbols
+    """
+    if not PERPLEXITY_API_KEY:
+        logger.warning("⚠️ Perplexity API key not configured - news detection disabled")
+        return []
+
+    try:
+        # Search for breaking news in last 5 minutes
+        symbols_str = ", ".join(symbols)
+        query = f"breaking financial news last 5 minutes {symbols_str} stock market"
+
+        logger.info(f"🔍 Perplexity: Checking for breaking news...")
+
+        result = await perplexity_client.search(query)
+
+        if not result or 'error' in result:
+            logger.warning(f"⚠️ Perplexity search failed: {result.get('error', 'Unknown error')}")
+            return []
+
+        # Parse results for symbol mentions and timestamps
+        news_events = []
+        answer = result.get('answer', '')
+
+        for symbol in symbols:
+            if symbol.upper() in answer.upper():
+                news_events.append({
+                    'symbol': symbol,
+                    'headline': answer[:200],  # First 200 chars
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'age_minutes': 0,  # Assume fresh if found
+                    'source': 'perplexity'
+                })
+                logger.info(f"📰 News detected for {symbol}")
+
+        return news_events
+
+    except Exception as e:
+        logger.error(f"❌ Perplexity news detection error: {e}")
+        return []
+
+async def calculate_delta_based_score(symbol: str, strike: float, current_price: float,
+                                      expiration_date: str, option_data: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Calculate option score using delta as primary ITM probability.
+    Simpler, faster, market-implied approach vs complex simulations.
+
+    Args:
+        symbol: Stock ticker
+        strike: Option strike price
+        current_price: Current stock price
+        expiration_date: Option expiration date
+        option_data: Optional pre-fetched option data
+
+    Returns:
+        Dict with score, delta, profit_potential, risk
+    """
+    try:
+        # Get option data if not provided
+        if not option_data:
+            option_data = await get_realtime_option_data(symbol, strike, expiration_date)
+
+            if 'error' in option_data:
+                return {'error': option_data['error']}
+
+        # Use delta as ITM probability (market's view)
+        delta = option_data.get('delta', 0.5)
+        iv = option_data.get('implied_volatility', 0.25)
+        option_price = option_data.get('option_price', 0)
+        volume = option_data.get('volume', 0)
+        avg_volume = option_data.get('average_volume', volume or 100)
+
+        # Calculate time to expiration
+        try:
+            exp_date = datetime.datetime.strptime(expiration_date, '%Y-%m-%d')
+            days_to_exp = (exp_date - datetime.datetime.now()).days
+        except:
+            days_to_exp = 14  # Default
+
+        time_to_exp = days_to_exp / 365.25
+
+        # ITM probability from delta (no complex simulations needed)
+        itm_probability = abs(delta)  # Delta already includes market view
+
+        # Profit potential from IV-based expected move
+        expected_move = current_price * iv * (time_to_exp ** 0.5)
+        if option_price > 0:
+            profit_potential = expected_move / option_price
+        else:
+            profit_potential = 0
+
+        # Volume conviction multiplier
+        if avg_volume > 0:
+            volume_ratio = volume / avg_volume
+            conviction = min(2.0, volume_ratio / 3.0)  # Cap at 2x
+        else:
+            conviction = 1.0
+
+        # Risk score (simpler)
+        otm_percent = max(0, (strike - current_price) / current_price)
+        theta_risk = max(0, (14 - days_to_exp) / 14) if days_to_exp < 14 else 0
+        risk_score = (otm_percent * 5) + (theta_risk * 3) + (1.0 - conviction) * 2
+        risk_score = min(10, risk_score)
+
+        # Simple composite score
+        score = (itm_probability * 0.4 + min(1.0, profit_potential) * 0.3 +
+                 conviction * 0.2 + (1.0 - risk_score/10) * 0.1) * 10
+
+        return {
+            'score': score,
+            'delta': delta,
+            'itm_probability': itm_probability,
+            'profit_potential': profit_potential,
+            'conviction': conviction,
+            'risk_score': risk_score,
+            'option_price': option_price,
+            'volume': volume,
+            'iv': iv,
+            'days_to_exp': days_to_exp
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Delta-based scoring error: {e}")
+        return {'error': str(e)}
+
+async def detect_edges(symbol: str, news_age_minutes: int, option_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Multi-layer edge detection system.
+
+    Edges:
+    1. Speed Edge - News < 3 minutes old
+    2. Smart Money - Volume > 3x average
+    3. Cheap Options - IV percentile < 30%
+    4. VIX Regime - Market fear adjustment
+    5. Sentiment - Perplexity validation
+
+    Args:
+        symbol: Stock ticker
+        news_age_minutes: How old the news is
+        option_data: Option data including volume, IV, etc
+
+    Returns:
+        Dict with edges detected and edge score
+    """
+    edges_detected = []
+    edge_score = 0.0
+
+    # 1. Speed Edge (news < 3 minutes)
+    if news_age_minutes <= 3:
+        edges_detected.append("Speed Edge (news < 3 minutes)")
+        edge_score += 1.0
+    elif news_age_minutes <= 8:
+        edges_detected.append("Speed Edge (news < 8 minutes)")
+        edge_score += 0.5
+
+    # 2. Smart Money Edge (volume > 3x average)
+    volume = option_data.get('volume', 0)
+    avg_volume = option_data.get('average_volume', volume or 100)
+
+    if avg_volume > 0 and volume > avg_volume * 3:
+        edges_detected.append(f"Smart Money (volume {volume/avg_volume:.1f}x average)")
+        edge_score += 1.0
+    elif avg_volume > 0 and volume > avg_volume * 2:
+        edges_detected.append(f"Smart Money (volume {volume/avg_volume:.1f}x average)")
+        edge_score += 0.5
+
+    # 3. Cheap Options Edge (IV percentile < 30%)
+    # For now, use simple IV comparison (can enhance with historical percentiles)
+    iv = option_data.get('implied_volatility', 0.25)
+    if iv < 0.20:  # Low IV = cheap options
+        edges_detected.append("Cheap Options (low IV)")
+        edge_score += 1.0
+    elif iv < 0.30:
+        edges_detected.append("Cheap Options (moderate IV)")
+        edge_score += 0.5
+
+    # 4. VIX Regime Edge (would need VIX data from FRED or other source)
+    # Placeholder - can add FRED VIX check here
+    # For now, assume neutral market (no edge)
+
+    # 5. Sentiment Edge (would validate via Perplexity sentiment analysis)
+    # This is partially covered by the news detection itself
+    # Add explicit sentiment validation later if needed
+
+    return {
+        'edges_detected': edges_detected,
+        'edge_count': len(edges_detected),
+        'edge_score': edge_score
+    }
+
+def calculate_confidence_score(edge_score: float, edge_count: int, news_age_minutes: int,
+                               option_score: float, sentiment_positive: bool = True) -> float:
+    """
+    Calculate confidence score (1-10 scale) based on multiple factors.
+
+    Formula:
+    - Base: 5.0
+    - +1.0 per edge (max +3.0)
+    - +0.5 if edge_score > 2.5
+    - +1.0 if edge_score > 3.0
+    - +0.5 if AI validates bullish
+    - -0.5 if news > 5 minutes old
+
+    Args:
+        edge_score: Total edge score
+        edge_count: Number of edges detected
+        news_age_minutes: Age of news in minutes
+        option_score: Delta-based option score
+        sentiment_positive: Whether sentiment is bullish
+
+    Returns:
+        Confidence score (1.0-10.0)
+    """
+    confidence = 5.0
+
+    # Edge count bonus (max +3.0)
+    confidence += min(3.0, edge_count * 1.0)
+
+    # Edge score bonuses
+    if edge_score > 3.0:
+        confidence += 1.0
+    elif edge_score > 2.5:
+        confidence += 0.5
+
+    # Sentiment bonus
+    if sentiment_positive:
+        confidence += 0.5
+
+    # News freshness penalty
+    if news_age_minutes > 5:
+        confidence -= 0.5
+
+    # Option quality bonus
+    if option_score > 7.0:
+        confidence += 0.5
+
+    # Cap at 1.0 - 10.0
+    return max(1.0, min(10.0, confidence))
+
+# ============================================================================
 # AUTO-BOT REAL-TIME MONITORING LOOP
 # ============================================================================
 
@@ -3967,24 +4217,162 @@ async def auto_bot_monitoring_loop():
     WATCHLIST = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'SPY', 'QQQ', 'AMD', 'NFLX', 'COIN', 'PLTR', 'SHOP', 'SQ']
 
     iteration = 0
+    import random
 
     while AUTO_BOT_ENABLED:
         try:
             iteration += 1
             logger.info(f"🤖 Auto-Bot iteration {iteration} - Checking for opportunities...")
 
-            # TODO: Implement full auto-bot logic:
-            # 1. Poll Perplexity for breaking news (60-90 sec intervals)
-            # 2. Detect news events for watchlist symbols
-            # 3. Calculate multi-edge scores for detected events
-            # 4. Calculate confidence scores
-            # 5. Send Slack alerts when thresholds met
+            # STEP 1: Poll Perplexity for breaking news
+            news_events = await detect_breaking_news_perplexity(WATCHLIST)
 
-            # Placeholder for now - will implement in next steps
-            logger.info("🤖 Auto-Bot placeholder - full implementation pending")
+            if news_events:
+                logger.info(f"📰 Found {len(news_events)} news events")
+
+                # STEP 2: Analyze each news event
+                opportunities = []
+
+                for news in news_events:
+                    symbol = news['symbol']
+                    news_age = news['age_minutes']
+
+                    logger.info(f"🔍 Analyzing {symbol} - news age: {news_age} minutes")
+
+                    # Get current stock price
+                    try:
+                        stock_data = await polygon_client.get_stock_quote(symbol)
+                        if not stock_data or 'error' in stock_data:
+                            continue
+
+                        current_price = stock_data.get('price', 0)
+                        if current_price == 0:
+                            continue
+
+                        # Find ATM call option (nearest strike above current price)
+                        strike = round(current_price * 1.02 / 5) * 5  # Round to nearest $5, 2% OTM
+
+                        # Get nearest expiration (14-21 days out)
+                        from datetime import datetime, timedelta
+                        target_exp = datetime.now() + timedelta(days=14)
+                        expiration_date = target_exp.strftime('%Y-%m-%d')
+
+                        # Get option data
+                        option_data = await get_realtime_option_data(symbol, strike, expiration_date)
+
+                        if 'error' in option_data:
+                            logger.warning(f"⚠️ Could not get option data for {symbol} ${strike}")
+                            continue
+
+                        # STEP 3: Calculate delta-based score
+                        scoring = await calculate_delta_based_score(
+                            symbol, strike, current_price, expiration_date, option_data
+                        )
+
+                        if 'error' in scoring:
+                            continue
+
+                        # STEP 4: Detect edges
+                        edges = await detect_edges(symbol, news_age, option_data)
+
+                        # STEP 5: Calculate confidence score
+                        confidence = calculate_confidence_score(
+                            edges['edge_score'],
+                            edges['edge_count'],
+                            news_age,
+                            scoring['score'],
+                            sentiment_positive=True  # Assume bullish if news detected
+                        )
+
+                        # STEP 6: Check thresholds
+                        alert_threshold_met = (
+                            edges['edge_count'] >= 3 and
+                            edges['edge_score'] >= 2.0 and
+                            confidence >= 6.0 and
+                            scoring['score'] >= 5.0
+                        )
+
+                        if alert_threshold_met:
+                            opportunities.append({
+                                'symbol': symbol,
+                                'strike': strike,
+                                'expiration': expiration_date,
+                                'current_price': current_price,
+                                'option_price': scoring['option_price'],
+                                'score': scoring['score'],
+                                'edge_score': edges['edge_score'],
+                                'edge_count': edges['edge_count'],
+                                'edges_detected': edges['edges_detected'],
+                                'confidence': confidence,
+                                'delta': scoring['delta'],
+                                'itm_probability': scoring['itm_probability'],
+                                'profit_potential': scoring['profit_potential'],
+                                'days_to_exp': scoring['days_to_exp'],
+                                'headline': news['headline'],
+                                'news_age': news_age
+                            })
+
+                            logger.info(f"✅ {symbol} ${strike} met alert thresholds! Confidence: {confidence:.1f}/10")
+
+                    except Exception as e:
+                        logger.error(f"❌ Error analyzing {symbol}: {e}")
+                        continue
+
+                # STEP 7: Send Slack alerts for top 5 opportunities
+                if opportunities:
+                    # Sort by confidence score (highest first)
+                    opportunities.sort(key=lambda x: x['confidence'], reverse=True)
+                    top_opportunities = opportunities[:5]
+
+                    # Format alert message
+                    alert_message = "SMART PICK ALERT - AUTO-BOT\n\n"
+                    alert_message += f"Detected {len(top_opportunities)} high-confidence opportunities:\n\n"
+
+                    for i, opp in enumerate(top_opportunities, 1):
+                        alert_message += f"{i}. {opp['symbol']} ${opp['strike']} Call (Exp: {opp['expiration']})\n"
+                        alert_message += f"   Edge Score: {opp['edge_score']:.1f} | Confidence: {opp['confidence']:.1f}/10\n"
+                        alert_message += f"   ITM Probability: {opp['itm_probability']:.1%} (Delta: {opp['delta']:.2f})\n"
+                        alert_message += f"   Option Price: ${opp['option_price']:.2f} | Stock: ${opp['current_price']:.2f}\n"
+                        alert_message += f"   Edges Detected:\n"
+                        for edge in opp['edges_detected']:
+                            alert_message += f"   - {edge}\n"
+                        alert_message += f"   News: {opp['headline'][:100]}...\n\n"
+
+                    alert_message += f"Generated by Auto-Bot (Iteration {iteration})\n"
+                    alert_message += f"Monitoring {len(WATCHLIST)} symbols with 60-90s polling"
+
+                    # Send to Slack using webhook
+                    try:
+                        import requests
+                        webhook_url = os.getenv('SLACK_WEBHOOK_URL')
+
+                        if webhook_url:
+                            slack_payload = {
+                                "text": alert_message,
+                                "username": "StockFlow Auto-Bot",
+                                "icon_emoji": ":robot_face:"
+                            }
+
+                            response = requests.post(webhook_url, json=slack_payload, timeout=10)
+
+                            if response.status_code == 200:
+                                logger.info(f"✅ Auto-Bot alert sent to Slack: {len(top_opportunities)} opportunities")
+                            else:
+                                logger.error(f"❌ Slack notification failed: {response.status_code}")
+                        else:
+                            logger.warning("⚠️ SLACK_WEBHOOK_URL not configured - alert not sent")
+                            logger.info(f"📊 Would have sent alert with {len(top_opportunities)} opportunities")
+
+                    except Exception as slack_error:
+                        logger.error(f"❌ Failed to send Auto-Bot alert to Slack: {slack_error}")
+
+                else:
+                    logger.info("📊 News events found but no opportunities met thresholds")
+
+            else:
+                logger.info("📊 No breaking news detected in this cycle")
 
             # Wait 60-90 seconds before next check (randomized to avoid patterns)
-            import random
             wait_time = random.randint(60, 90)
             logger.info(f"🤖 Auto-Bot waiting {wait_time} seconds until next check...")
 
@@ -3995,6 +4383,8 @@ async def auto_bot_monitoring_loop():
             break
         except Exception as e:
             logger.error(f"🤖 Auto-Bot error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             # Continue running even if one iteration fails
             await asyncio.sleep(60)
 
